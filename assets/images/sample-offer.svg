@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1">
+      <stop stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="520" rx="36" fill="url(#bg)"/>
+  <rect x="160" y="70" width="480" height="380" rx="22" fill="#f8fafc"/>
+  <rect x="205" y="120" width="250" height="22" rx="11" fill="#1e293b"/>
+  <rect x="205" y="170" width="390" height="14" rx="7" fill="#94a3b8"/>
+  <rect x="205" y="205" width="340" height="14" rx="7" fill="#cbd5e1"/>
+  <rect x="205" y="255" width="390" height="90" rx="14" fill="#e2e8f0"/>
+  <circle cx="560" cy="390" r="34" fill="#22c55e"/>
+  <path d="M544 390l11 11 23-25" fill="none" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="400" y="415" text-anchor="middle" font-family="Arial" font-size="28" fill="#334155">PRICE OFFER</text>
+</svg>

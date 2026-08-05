@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1">
+      <stop stop-color="#064e3b"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="520" rx="36" fill="url(#bg)"/>
+  <rect x="130" y="90" width="540" height="340" rx="30" fill="#ecfdf5"/>
+  <rect x="215" y="160" width="370" height="210" rx="26" fill="#a7f3d0"/>
+  <circle cx="400" cy="265" r="86" fill="#10b981"/>
+  <path d="M350 265h100M400 215v100" stroke="#ecfdf5" stroke-width="24" stroke-linecap="round"/>
+  <text x="400" y="410" text-anchor="middle" font-family="Arial" font-size="28" fill="#065f46">PURCHASE ITEM</text>
+</svg>

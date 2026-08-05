@@ -2,7 +2,9 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#08111f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
 
   <title>نظام إدارة المشتريات</title>
 
@@ -10,22 +12,310 @@
 </head>
 
 <body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand__icon" aria-hidden="true">🧾</div>
+        <div>
+          <p class="brand__eyebrow">متابعة ورقيات المشتريات</p>
+          <h1>إدارة المشتريات</h1>
+        </div>
+      </div>
 
-  <main class="card">
-    <div class="status">النظام متصل بالإنترنت</div>
+      <button
+        class="icon-button"
+        id="resetDataButton"
+        type="button"
+        title="إعادة البيانات التجريبية"
+        aria-label="إعادة البيانات التجريبية"
+      >
+        ↻
+      </button>
+    </header>
 
-    <h1>نظام إدارة المشتريات</h1>
+    <section class="summary" aria-label="ملخص الطلبات">
+      <article class="summary-card">
+        <span>كل الطلبات</span>
+        <strong id="totalCount">0</strong>
+      </article>
 
-    <p>
-      منصة بسيطة لتنظيم طلبات الشراء ومتابعة المشتريات.
-      هذه هي النسخة التجريبية الأولى من النظام.
-    </p>
+      <article class="summary-card">
+        <span>بانتظار عروض</span>
+        <strong id="waitingQuotesCount">0</strong>
+      </article>
 
-    <button id="startButton">اختبار النظام</button>
+      <article class="summary-card">
+        <span>تم الشراء</span>
+        <strong id="purchasedCount">0</strong>
+      </article>
 
-    <div id="result"></div>
-  </main>
+      <article class="summary-card">
+        <span>تمت التصفية</span>
+        <strong id="settledCount">0</strong>
+      </article>
+    </section>
 
+    <section class="toolbar" aria-label="البحث والفلاتر">
+      <button id="openFiltersButton" class="filter-button" type="button">
+        <span aria-hidden="true">⚙</span>
+        <span>الفلاتر</span>
+        <span id="activeFiltersCount" class="filter-count" hidden>0</span>
+      </button>
+
+      <label class="search-box">
+        <span aria-hidden="true">⌕</span>
+        <input
+          id="searchInput"
+          type="search"
+          placeholder="ابحث في الطلبات..."
+          autocomplete="off"
+        >
+      </label>
+    </section>
+
+    <section id="appliedFilters" class="applied-filters" aria-live="polite"></section>
+
+    <main class="main-content">
+      <div class="list-heading">
+        <div>
+          <h2>الطلبات الحالية</h2>
+          <p id="resultsText">يعرض جميع الطلبات</p>
+        </div>
+
+        <span class="reorder-hint">اضغط مطولًا ثم حرّك للترتيب</span>
+      </div>
+
+      <section id="requestList" class="request-list" aria-live="polite"></section>
+
+      <section id="emptyState" class="empty-state" hidden>
+        <div class="empty-state__icon">📭</div>
+        <h3>لا توجد نتائج</h3>
+        <p>جرّب تغيير الفلاتر أو عبارة البحث.</p>
+      </section>
+    </main>
+  </div>
+
+  <button
+    id="addRequestButton"
+    class="fab"
+    type="button"
+    aria-label="إضافة طلب جديد"
+    title="إضافة طلب جديد"
+  >
+    <span aria-hidden="true">＋</span>
+  </button>
+
+  <div id="filtersOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-filters></div>
+
+    <section
+      class="sheet filter-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="filtersTitle"
+    >
+      <div class="sheet__handle" aria-hidden="true"></div>
+
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">اختر ما تريد عرضه</p>
+          <h2 id="filtersTitle">الفلاتر</h2>
+        </div>
+
+        <button
+          class="icon-button"
+          type="button"
+          data-close-filters
+          aria-label="إغلاق نافذة الفلاتر"
+        >
+          ✕
+        </button>
+      </header>
+
+      <div class="filter-panel">
+        <section class="filter-group">
+          <h3>حالة الطلب</h3>
+          <div class="filter-options" data-filter-group="status">
+            <button class="filter-option" type="button" data-filter-value="all">الكل</button>
+            <button class="filter-option" type="button" data-filter-value="new">جديد</button>
+            <button class="filter-option" type="button" data-filter-value="quotes">عروض أسعار</button>
+            <button class="filter-option" type="button" data-filter-value="purchased">تم الشراء</button>
+            <button class="filter-option" type="button" data-filter-value="not-purchased">لم يتم الشراء</button>
+          </div>
+        </section>
+
+        <section class="filter-group">
+          <h3>نوع الطلب</h3>
+          <div class="filter-options" data-filter-group="type">
+            <button class="filter-option" type="button" data-filter-value="all">كل الأنواع</button>
+            <button class="filter-option filter-option--work" type="button" data-filter-value="work-order">أمر تشغيل</button>
+            <button class="filter-option filter-option--materials" type="button" data-filter-value="materials">طلب شراء مواد</button>
+          </div>
+        </section>
+
+        <section class="filter-group">
+          <h3>الجهة الطالبة</h3>
+          <div class="filter-options" data-filter-group="department">
+            <button class="filter-option" type="button" data-filter-value="all">كل الجهات</button>
+            <button class="filter-option" type="button" data-filter-value="operations">العمليات</button>
+            <button class="filter-option" type="button" data-filter-value="engineering">الهندسية</button>
+            <button class="filter-option" type="button" data-filter-value="technical">الفنية</button>
+          </div>
+        </section>
+
+        <section class="filter-group">
+          <h3>حالة التصفية</h3>
+          <div class="filter-options" data-filter-group="settlement">
+            <button class="filter-option" type="button" data-filter-value="all">الكل</button>
+            <button class="filter-option" type="button" data-filter-value="settled">تمت التصفية</button>
+            <button class="filter-option" type="button" data-filter-value="not-settled">لم تتم التصفية</button>
+          </div>
+        </section>
+
+        <div class="filter-actions">
+          <button id="resetFiltersButton" class="secondary-button" type="button">
+            إعادة ضبط
+          </button>
+
+          <button id="applyFiltersButton" class="primary-button" type="button">
+            موافق
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="detailsOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-details></div>
+
+    <section
+      class="sheet details-sheet"
+      id="detailsSheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="detailsTitle"
+    >
+      <div class="sheet__handle" aria-hidden="true"></div>
+
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">تفاصيل الطلب</p>
+          <h2 id="detailsTitle">—</h2>
+        </div>
+
+        <button
+          class="icon-button"
+          type="button"
+          data-close-details
+          aria-label="إغلاق التفاصيل"
+        >
+          ✕
+        </button>
+      </header>
+
+      <div id="detailsContent" class="sheet__content"></div>
+
+      <p class="double-tap-note">انقر مرتين داخل التفاصيل للخروج</p>
+    </section>
+  </div>
+
+  <div id="addOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-add></div>
+
+    <section
+      class="sheet add-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="addTitle"
+    >
+      <div class="sheet__handle" aria-hidden="true"></div>
+
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">إضافة محفوظة على هذا الجهاز</p>
+          <h2 id="addTitle">طلب جديد</h2>
+        </div>
+
+        <button
+          class="icon-button"
+          type="button"
+          data-close-add
+          aria-label="إغلاق نموذج الإضافة"
+        >
+          ✕
+        </button>
+      </header>
+
+      <form id="addRequestForm" class="request-form">
+        <label>
+          <span>النص المختصر</span>
+          <input name="title" type="text" maxlength="90" required placeholder="مثال: شراء كابلات للموقع">
+        </label>
+
+        <label>
+          <span>حقل التفاصيل</span>
+          <textarea
+            name="description"
+            rows="5"
+            required
+            placeholder="اكتب شرح المادة أو أمر التشغيل بالتفصيل"
+          ></textarea>
+        </label>
+
+        <label>
+          <span>الجهة الطالبة</span>
+          <select name="department" required>
+            <option value="operations">العمليات</option>
+            <option value="engineering">الهندسية</option>
+            <option value="technical">الفنية</option>
+          </select>
+        </label>
+
+        <label>
+          <span>نوع الطلب</span>
+          <select name="type" required>
+            <option value="materials">طلب شراء مواد</option>
+            <option value="work-order">أمر تشغيل</option>
+          </select>
+        </label>
+
+        <div class="form-row">
+          <label>
+            <span>الحالة الأولية</span>
+            <select name="status">
+              <option value="new">تم رفع الطلب</option>
+              <option value="quotes">تم إحضار عروض أسعار</option>
+              <option value="purchased">تم الشراء</option>
+            </select>
+          </label>
+
+          <label>
+            <span>السعر الأولي (ل.س)</span>
+            <input name="initialPrice" type="number" min="0" step="1" placeholder="اختياري">
+          </label>
+        </div>
+
+        <label class="check-row">
+          <input name="settled" type="checkbox">
+          <span>تمت تصفية هذا الطلب</span>
+        </label>
+
+        <label>
+          <span>صور مرفقة</span>
+          <input name="attachments" id="attachmentsInput" type="file" accept="image/*" multiple>
+          <small id="attachmentsPreviewText">
+            تحفظ الصور المصغّرة محليًا في هذه النسخة التجريبية.
+          </small>
+        </label>
+
+        <button class="primary-button" type="submit">إضافة الطلب</button>
+      </form>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="data/mock-data.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
