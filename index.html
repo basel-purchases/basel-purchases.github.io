@@ -12,7 +12,30 @@
 </head>
 
 <body>
-  <div class="app-shell">
+  <section id="authGate" class="auth-gate" aria-label="تسجيل الدخول">
+    <div class="auth-card">
+      <div class="auth-card__icon" aria-hidden="true">🧾</div>
+      <p class="auth-card__eyebrow">نظام إدارة المشتريات</p>
+      <h1>تسجيل الدخول</h1>
+      <p class="auth-card__hint">استخدم اسم الحساب أو البريد وكلمة المرور الخاصة بك.</p>
+
+      <form id="authForm" class="auth-form">
+        <label>
+          <span>اسم المستخدم</span>
+          <input id="authIdentifier" name="identifier" type="text" autocomplete="username" required placeholder="مثال: basel أو mohammad">
+        </label>
+        <label>
+          <span>كلمة المرور</span>
+          <input id="authPassword" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p id="authError" class="auth-error" hidden></p>
+        <p id="authStatus" class="auth-status" aria-live="polite"></p>
+        <button id="authSubmit" class="primary-button" type="submit">دخول</button>
+      </form>
+    </div>
+  </section>
+
+  <div id="appShell" class="app-shell" hidden>
     <header class="app-header">
       <div class="brand">
         <div class="brand__icon" aria-hidden="true">🧾</div>
@@ -22,15 +45,14 @@
         </div>
       </div>
 
-      <button
-        class="icon-button"
-        id="resetDataButton"
-        type="button"
-        title="إعادة البيانات التجريبية"
-        aria-label="إعادة البيانات التجريبية"
-      >
-        ↻
-      </button>
+      <div class="header-user">
+        <div class="header-user__info">
+          <strong id="currentUserName">—</strong>
+          <span id="currentUserRole">—</span>
+        </div>
+        <button id="refreshButton" class="header-user__button" type="button" title="تحديث البيانات" aria-label="تحديث البيانات">↻</button>
+        <button id="logoutButton" class="header-user__button" type="button">خروج</button>
+      </div>
     </header>
 
     <section class="summary" aria-label="ملخص الطلبات">
@@ -98,6 +120,7 @@
   <button
     id="addRequestButton"
     class="fab"
+    hidden
     type="button"
     aria-label="إضافة طلب جديد"
     title="إضافة طلب جديد"
@@ -172,6 +195,24 @@
           </div>
         </section>
 
+        <section class="filter-group">
+          <h3>إشارة بنود الشراء</h3>
+          <div class="filter-options" data-filter-group="itemSignal">
+            <button class="filter-option" type="button" data-filter-value="all">كل البنود</button>
+            <button class="filter-option filter-option--red" type="button" data-filter-value="red">مشكلة / غير موجود</button>
+            <button class="filter-option filter-option--green" type="button" data-filter-value="green">إشارة خضراء</button>
+            <button class="filter-option" type="button" data-filter-value="unmarked">بدون إشارة</button>
+          </div>
+        </section>
+
+        <details class="deletion-log">
+          <summary>
+            <span>سجل الحذف</span>
+            <span id="deletionLogCount" class="deletion-log__count">0</span>
+          </summary>
+          <div id="deletionLogList" class="deletion-log__list"></div>
+        </details>
+
         <div class="filter-actions">
           <button id="resetFiltersButton" class="secondary-button" type="button">
             إعادة ضبط
@@ -232,7 +273,7 @@
 
       <header class="sheet__header">
         <div>
-          <p class="sheet__eyebrow">إضافة محفوظة على هذا الجهاز</p>
+          <p class="sheet__eyebrow">إضافة محفوظة في قاعدة البيانات المشتركة</p>
           <h2 id="addTitle">طلب جديد</h2>
         </div>
 
@@ -253,16 +294,6 @@
         </label>
 
         <label>
-          <span>حقل التفاصيل</span>
-          <textarea
-            name="description"
-            rows="5"
-            required
-            placeholder="اكتب شرح المادة أو أمر التشغيل بالتفصيل"
-          ></textarea>
-        </label>
-
-        <label>
           <span>الجهة الطالبة</span>
           <select name="department" required>
             <option value="operations">العمليات</option>
@@ -277,6 +308,27 @@
             <option value="materials">طلب شراء مواد</option>
             <option value="work-order">أمر تشغيل</option>
           </select>
+        </label>
+
+        <section id="materialsItemsSection" class="materials-items-form">
+          <header class="materials-items-form__header">
+            <div>
+              <strong>بنود طلب الشراء</strong>
+              <small>أضف لكل بند المواصفات والمنشأ والكمية والسعر وحالة توفره.</small>
+            </div>
+            <button id="addMaterialItemButton" class="add-item-button" type="button">＋ بند</button>
+          </header>
+
+          <div id="materialItemsEditor" class="material-items-editor"></div>
+        </section>
+
+        <label id="workDescriptionField" hidden>
+          <span>تفاصيل أمر التشغيل</span>
+          <textarea
+            name="description"
+            rows="5"
+            placeholder="اكتب شرح أمر التشغيل بالتفصيل"
+          ></textarea>
         </label>
 
         <div class="form-row">
@@ -301,10 +353,10 @@
         </label>
 
         <label>
-          <span>صور مرفقة</span>
-          <input name="attachments" id="attachmentsInput" type="file" accept="image/*" multiple>
+          <span>صور أو ملفات PDF</span>
+          <input name="attachments" id="attachmentsInput" type="file" accept="image/*,application/pdf" multiple>
           <small id="attachmentsPreviewText">
-            تحفظ الصور المصغّرة محليًا في هذه النسخة التجريبية.
+            ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.
           </small>
         </label>
 
@@ -315,7 +367,8 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="data/mock-data.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/supabase-config.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
