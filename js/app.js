@@ -1,42 +1,78 @@
-const DATA_STORAGE_KEY = "purchase-manager-data-v3";
-const FILTERS_STORAGE_KEY = "purchase-manager-filters-v3";
-const OLD_DATA_STORAGE_KEY = "purchase-manager-data-v2";
-const OLD_FILTERS_STORAGE_KEY = "purchase-manager-filters-v2";
+const FILTERS_STORAGE_KEY = "purchase-manager-filters-v5";
+const LEGACY_FILTERS_KEYS = [
+  "purchase-manager-filters-v4",
+  "purchase-manager-filters-v3",
+  "purchase-manager-filters-v2"
+];
 
 const CURRENT_USER = {
-  id: "user-basel",
-  name: "باسل"
+  id: null,
+  name: "",
+  role: "user",
+  email: ""
 };
 
-const MAX_LOCAL_IMAGES = 4;
-const MAX_IMAGE_SIDE = 1100;
-const JPEG_QUALITY = 0.72;
+const STORAGE_BUCKET = "purchase-files";
+const MAX_ATTACHMENTS = 8;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_SIDE = 1600;
+const JPEG_QUALITY = 0.78;
+const AUTO_REFRESH_MS = 30000;
+
+const LOGIN_ALIASES = new Map([
+  ["basel", "basel.slaby@gmail.com"],
+  ["باسل", "basel.slaby@gmail.com"],
+  ["mohammad", "mohammad@purchases.com"],
+  ["mohamed", "mohammad@purchases.com"],
+  ["محمد", "mohammad@purchases.com"],
+  ["adnan", "adnan@purchases.com"],
+  ["عدنان", "adnan@purchases.com"],
+  ["samer", "samer@purchases.com"],
+  ["سامر", "samer@purchases.com"],
+  ["guest", "guest@purchases.com"],
+  ["ضيف", "guest@purchases.com"]
+]);
 
 const defaultFilters = {
   status: "all",
   type: "all",
   department: "all",
-  settlement: "all",
+  settlement: "not-settled",
+  itemSignal: "all",
   query: ""
 };
 
 const state = {
-  requests: loadStoredRequests(),
+  requests: [],
   filters: loadStoredFilters(),
   draftFilters: { ...defaultFilters },
+  deletionLog: [],
   activeDetailsId: null,
   noteFormOpen: false,
   editingNoteId: null,
-  lastCardTap: {
-    id: null,
-    time: 0
-  },
+  lastCardTap: { id: null, time: 0 },
   lastDetailsTap: 0,
   suppressTapUntil: 0,
-  selectedAttachments: []
+  selectedAttachments: [],
+  materialItemSequence: 0,
+  syncTimer: null,
+  isRefreshing: false,
+  isAuthenticated: false
 };
 
 const elements = {
+  authGate: document.getElementById("authGate"),
+  authForm: document.getElementById("authForm"),
+  authIdentifier: document.getElementById("authIdentifier"),
+  authPassword: document.getElementById("authPassword"),
+  authError: document.getElementById("authError"),
+  authSubmit: document.getElementById("authSubmit"),
+  authStatus: document.getElementById("authStatus"),
+  appShell: document.getElementById("appShell"),
+  currentUserName: document.getElementById("currentUserName"),
+  currentUserRole: document.getElementById("currentUserRole"),
+  logoutButton: document.getElementById("logoutButton"),
+  refreshButton: document.getElementById("refreshButton"),
   requestList: document.getElementById("requestList"),
   emptyState: document.getElementById("emptyState"),
   resultsText: document.getElementById("resultsText"),
@@ -51,6 +87,8 @@ const elements = {
   openFiltersButton: document.getElementById("openFiltersButton"),
   resetFiltersButton: document.getElementById("resetFiltersButton"),
   applyFiltersButton: document.getElementById("applyFiltersButton"),
+  deletionLogCount: document.getElementById("deletionLogCount"),
+  deletionLogList: document.getElementById("deletionLogList"),
   detailsOverlay: document.getElementById("detailsOverlay"),
   detailsSheet: document.getElementById("detailsSheet"),
   detailsTitle: document.getElementById("detailsTitle"),
@@ -58,67 +96,43 @@ const elements = {
   addOverlay: document.getElementById("addOverlay"),
   addRequestButton: document.getElementById("addRequestButton"),
   addRequestForm: document.getElementById("addRequestForm"),
+  materialsItemsSection: document.getElementById("materialsItemsSection"),
+  materialItemsEditor: document.getElementById("materialItemsEditor"),
+  addMaterialItemButton: document.getElementById("addMaterialItemButton"),
+  workDescriptionField: document.getElementById("workDescriptionField"),
   attachmentsInput: document.getElementById("attachmentsInput"),
   attachmentsPreviewText: document.getElementById("attachmentsPreviewText"),
-  resetDataButton: document.getElementById("resetDataButton"),
   toast: document.getElementById("toast")
 };
 
-function cloneDefaultRequests() {
-  return structuredClone(window.MOCK_PURCHASE_REQUESTS).map(normalizeRequest);
-}
-
-function normalizeRequest(request) {
-  const normalizedNotes = Array.isArray(request.notes)
-    ? request.notes.map((note, index) => normalizeNote(note, request.id, index))
-    : request.notes
-      ? [
-          {
-            id: `MIGRATED-${request.id}-1`,
-            text: String(request.notes),
-            authorId: "legacy-user",
-            authorName: "مستخدم سابق",
-            createdAt: request.createdAt
-              ? `${request.createdAt}T09:00:00`
-              : new Date().toISOString()
-          }
-        ]
-      : [];
-
-  return {
-    ...request,
-    currency: "SYP",
-    department: request.department || "operations",
-    settled: Boolean(request.settled),
-    initialPrice:
-      request.initialPrice === undefined
-        ? request.price ?? null
-        : request.initialPrice,
-    notes: normalizedNotes,
-    attachments: Array.isArray(request.attachments)
-      ? request.attachments
-      : []
-  };
-}
-
-function normalizeNote(note, requestId, index) {
-  if (typeof note === "string") {
-    return {
-      id: `NOTE-${requestId}-${index + 1}`,
-      text: note,
-      authorId: "legacy-user",
-      authorName: "مستخدم سابق",
-      createdAt: new Date().toISOString()
-    };
+function getSupabase() {
+  if (!window.purchaseSupabase) {
+    throw new Error("تعذر تهيئة الاتصال بقاعدة البيانات.");
   }
+  return window.purchaseSupabase;
+}
+
+function normalizeOptionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizePurchaseItem(item, requestId, index) {
+  const allowedSignals = new Set(["none", "green", "red"]);
+  const signal = allowedSignals.has(item?.signal) ? item.signal : "none";
 
   return {
-    id: note.id || `NOTE-${requestId}-${Date.now()}-${index}`,
-    text: String(note.text || ""),
-    authorId: note.authorId || "legacy-user",
-    authorName: note.authorName || "مستخدم سابق",
-    createdAt: note.createdAt || new Date().toISOString(),
-    updatedAt: note.updatedAt || null
+    id: item?.id || `ITEM-${requestId}-${index + 1}-${Date.now()}`,
+    name: String(item?.name || `البند ${index + 1}`),
+    specifications: String(item?.specifications || item?.specs || ""),
+    origin: String(item?.origin || ""),
+    quantity: normalizeOptionalNumber(item?.quantity),
+    price: normalizeOptionalNumber(item?.price),
+    available: item?.available !== false,
+    action: String(item?.action || ""),
+    signal
   };
 }
 
@@ -131,61 +145,356 @@ function readStoredJson(key) {
   }
 }
 
-function loadStoredRequests() {
-  const current = readStoredJson(DATA_STORAGE_KEY);
+function dbItemToApp(item) {
+  return {
+    id: item.id,
+    name: String(item.item_name || ""),
+    specifications: String(item.specifications || ""),
+    origin: String(item.origin || ""),
+    quantity: normalizeOptionalNumber(item.quantity),
+    unit: String(item.unit || ""),
+    price: normalizeOptionalNumber(item.price),
+    available: item.available !== false,
+    action: String(item.action_if_unavailable || ""),
+    signal: ["none", "green", "red"].includes(item.signal) ? item.signal : "none",
+    sortOrder: Number(item.sort_order || 0)
+  };
+}
 
-  if (Array.isArray(current) && current.length > 0) {
-    return current.map(normalizeRequest);
+function dbNoteToApp(note) {
+  return {
+    id: note.id,
+    text: String(note.body || ""),
+    authorId: note.author_id,
+    authorName: note.author_name || "مستخدم",
+    createdAt: note.created_at,
+    updatedAt: note.updated_at || null
+  };
+}
+
+function dbAttachmentToApp(attachment) {
+  return {
+    id: attachment.id,
+    storagePath: attachment.storage_path,
+    name: attachment.original_name,
+    mimeType: attachment.mime_type || "",
+    sizeBytes: Number(attachment.size_bytes || 0),
+    kind: attachment.kind || "other",
+    createdAt: attachment.created_at,
+    url: ""
+  };
+}
+
+function dbRequestToApp(row) {
+  return {
+    id: row.id,
+    requestNumber: row.request_number,
+    title: row.title,
+    type: row.request_type,
+    department: row.department_code,
+    description: row.description || "",
+    initialPrice: normalizeOptionalNumber(row.initial_price),
+    currency: row.currency || "SYP",
+    createdAt: row.request_date || row.created_at,
+    created: Boolean(row.is_uploaded),
+    quotes: Boolean(row.has_quotes),
+    purchased: Boolean(row.is_purchased),
+    settled: Boolean(row.is_settled),
+    offersCount: Number(row.offers_count || 0),
+    supplier: row.supplier || "",
+    sortOrder: Number(row.sort_order || 0),
+    items: [...(row.purchase_items || [])]
+      .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+      .map(dbItemToApp),
+    notes: [...(row.notes || [])]
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map(dbNoteToApp),
+    attachments: [...(row.attachments || [])]
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map(dbAttachmentToApp)
+  };
+}
+
+function dbDeletionToApp(row) {
+  return {
+    id: String(row.id),
+    requestId: row.request_id,
+    title: row.title,
+    type: row.request_type,
+    typeLabel: getTypeLabel(row.request_type),
+    deletedById: row.deleted_by,
+    deletedByName: row.deleted_by_name,
+    deletedAt: row.deleted_at,
+    requestNumber: row.request_number,
+    snapshot: row.snapshot
+  };
+}
+
+function normalizeFilters(filters, migrateLegacy = false) {
+  const source = filters && typeof filters === "object" ? filters : {};
+  const normalized = {
+    ...defaultFilters,
+    ...source
+  };
+
+  if (migrateLegacy && (!source.settlement || source.settlement === "all")) {
+    normalized.settlement = "not-settled";
   }
 
-  const old = readStoredJson(OLD_DATA_STORAGE_KEY);
-
-  if (Array.isArray(old) && old.length > 0) {
-    const migrated = old.map(normalizeRequest);
-    localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(migrated));
-    return migrated;
+  if (!["all", "red", "green", "unmarked"].includes(normalized.itemSignal)) {
+    normalized.itemSignal = "all";
   }
 
-  return cloneDefaultRequests();
+  return normalized;
 }
 
 function loadStoredFilters() {
   const current = readStoredJson(FILTERS_STORAGE_KEY);
+  if (current) return normalizeFilters(current);
 
-  if (current && typeof current === "object") {
-    return {
-      ...defaultFilters,
-      ...current
-    };
-  }
-
-  const old = readStoredJson(OLD_FILTERS_STORAGE_KEY);
-
-  if (old && typeof old === "object") {
-    const migrated = {
-      ...defaultFilters,
-      ...old
-    };
-
-    localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(migrated));
-    return migrated;
+  for (const key of LEGACY_FILTERS_KEYS) {
+    const legacy = readStoredJson(key);
+    if (legacy) {
+      const migrated = normalizeFilters(legacy, true);
+      localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
   }
 
   return { ...defaultFilters };
 }
 
-function saveRequests() {
-  localStorage.setItem(
-    DATA_STORAGE_KEY,
-    JSON.stringify(state.requests)
-  );
+function saveFilters() {
+  localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(state.filters));
 }
 
-function saveFilters() {
-  localStorage.setItem(
-    FILTERS_STORAGE_KEY,
-    JSON.stringify(state.filters)
-  );
+let orderSaveTimer = null;
+function saveRequests() {
+  window.clearTimeout(orderSaveTimer);
+  orderSaveTimer = window.setTimeout(() => {
+    persistRequestOrder().catch(handleDatabaseError);
+  }, 250);
+}
+
+
+function handleDatabaseError(error, prefix = "تعذر حفظ التغيير") {
+  console.error(error);
+  const raw = String(error?.message || error?.error_description || "").trim();
+  const friendly = raw.includes("JWT")
+    ? "انتهت جلسة الدخول. سجّل الدخول من جديد."
+    : raw || prefix;
+  showToast(`${prefix}: ${friendly}`);
+}
+
+function resolveLoginIdentifier(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized.includes("@")) return normalized;
+  return LOGIN_ALIASES.get(normalized) || `${normalized}@purchases.com`;
+}
+
+function setAuthMessage(message = "", isError = false) {
+  if (!elements.authError || !elements.authStatus) return;
+  elements.authError.textContent = isError ? message : "";
+  elements.authError.hidden = !isError || !message;
+  elements.authStatus.textContent = !isError ? message : "";
+}
+
+function showAuthGate(message = "") {
+  state.isAuthenticated = false;
+  elements.appShell.hidden = true;
+  elements.addRequestButton.hidden = true;
+  elements.authGate.hidden = false;
+  if (message) setAuthMessage(message, true);
+  window.clearInterval(state.syncTimer);
+  state.syncTimer = null;
+}
+
+function showApplication() {
+  state.isAuthenticated = true;
+  elements.authGate.hidden = true;
+  elements.appShell.hidden = false;
+  elements.addRequestButton.hidden = false;
+  elements.currentUserName.textContent = CURRENT_USER.name || "مستخدم";
+  elements.currentUserRole.textContent = CURRENT_USER.role === "admin" ? "مدير" : "مستخدم";
+}
+
+async function loadCurrentProfile(user) {
+  const { data, error } = await getSupabase()
+    .from("profiles")
+    .select("id, display_name, role, active")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.active) throw new Error("هذا الحساب غير مفعّل أو لم تتم الموافقة عليه.");
+
+  CURRENT_USER.id = user.id;
+  CURRENT_USER.name = data.display_name || user.email || "مستخدم";
+  CURRENT_USER.role = data.role || "user";
+  CURRENT_USER.email = user.email || "";
+}
+
+async function hydrateAttachmentUrls(requests) {
+  const attachments = requests.flatMap((request) => request.attachments || []);
+  if (!attachments.length) return;
+
+  const paths = attachments.map((attachment) => attachment.storagePath);
+  const { data, error } = await getSupabase().storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrls(paths, 60 * 60);
+
+  if (error) {
+    console.warn("تعذر إنشاء روابط مؤقتة لبعض المرفقات.", error);
+    return;
+  }
+
+  attachments.forEach((attachment, index) => {
+    attachment.url = data?.[index]?.signedUrl || "";
+  });
+}
+
+async function fetchRequests() {
+  const { data, error } = await getSupabase()
+    .from("requests")
+    .select(`
+      id, request_number, title, request_type, department_code, description,
+      initial_price, currency, request_date, is_uploaded, has_quotes,
+      is_purchased, is_settled, offers_count, supplier, sort_order,
+      created_at, updated_at,
+      purchase_items (
+        id, item_name, specifications, origin, quantity, unit, price,
+        available, action_if_unavailable, signal, sort_order, created_at
+      ),
+      notes (
+        id, body, author_id, author_name, created_at, updated_at
+      ),
+      attachments (
+        id, storage_path, original_name, mime_type, size_bytes, kind, created_at
+      )
+    `)
+    .order("sort_order", { ascending: true })
+    .order("request_date", { ascending: false });
+
+  if (error) throw error;
+  const requests = (data || []).map(dbRequestToApp);
+  await hydrateAttachmentUrls(requests);
+  return requests;
+}
+
+async function fetchDeletionLog() {
+  const { data, error } = await getSupabase()
+    .from("deletion_log")
+    .select("id, request_id, request_number, title, request_type, deleted_by, deleted_by_name, deleted_at, snapshot")
+    .order("deleted_at", { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+  return (data || []).map(dbDeletionToApp);
+}
+
+async function refreshAppData({ silent = false } = {}) {
+  if (!state.isAuthenticated || state.isRefreshing) return;
+
+  state.isRefreshing = true;
+  if (!silent) showToast("جارٍ تحديث البيانات...");
+
+  try {
+    const [requests, deletionLog] = await Promise.all([
+      fetchRequests(),
+      fetchDeletionLog()
+    ]);
+
+    state.requests = requests;
+    state.deletionLog = deletionLog;
+    render();
+
+    if (state.activeDetailsId) {
+      const stillExists = state.requests.some((request) => request.id === state.activeDetailsId);
+      if (stillExists) renderDetails(state.activeDetailsId);
+      else closeDetails();
+    }
+
+    if (!silent) showToast("تم تحديث البيانات");
+  } catch (error) {
+    handleDatabaseError(error, "تعذر تحميل البيانات");
+  } finally {
+    state.isRefreshing = false;
+  }
+}
+
+async function persistRequestOrder() {
+  if (!state.isAuthenticated) return;
+  const client = getSupabase();
+  const updates = state.requests.map((request, index) => {
+    request.sortOrder = index * 100;
+    return client.from("requests").update({ sort_order: request.sortOrder }).eq("id", request.id);
+  });
+
+  const results = await Promise.all(updates);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) throw failed.error;
+}
+
+function canAutoRefresh() {
+  return state.isAuthenticated &&
+    document.visibilityState === "visible" &&
+    elements.detailsOverlay.hidden &&
+    elements.addOverlay.hidden &&
+    elements.filtersOverlay.hidden;
+}
+
+function startAutoRefresh() {
+  window.clearInterval(state.syncTimer);
+  state.syncTimer = window.setInterval(() => {
+    if (canAutoRefresh()) refreshAppData({ silent: true });
+  }, AUTO_REFRESH_MS);
+}
+
+async function enterAuthenticatedApp(session) {
+  if (!session?.user) {
+    showAuthGate();
+    return;
+  }
+
+  setAuthMessage("جارٍ تحميل حسابك...");
+  try {
+    await loadCurrentProfile(session.user);
+    showApplication();
+    await refreshAppData({ silent: true });
+    startAutoRefresh();
+  } catch (error) {
+    console.error(error);
+    await getSupabase().auth.signOut();
+    showAuthGate(error?.message || "تعذر فتح الحساب.");
+  }
+}
+
+async function initializeAuthentication() {
+  try {
+    const { data, error } = await getSupabase().auth.getSession();
+    if (error) throw error;
+
+    if (data.session) {
+      await enterAuthenticatedApp(data.session);
+    } else {
+      showAuthGate();
+    }
+
+    getSupabase().auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
+        showAuthGate();
+        state.requests = [];
+        state.deletionLog = [];
+        return;
+      }
+
+
+    });
+  } catch (error) {
+    console.error(error);
+    showAuthGate("تعذر الاتصال بخدمة تسجيل الدخول. تحقق من الإنترنت وحاول مجددًا.");
+  }
 }
 
 function getTypeLabel(type) {
@@ -222,6 +531,39 @@ function getSettlementLabel(value) {
   };
 
   return labels[value] || value;
+}
+
+function getItemSignalFilterLabel(value) {
+  const labels = {
+    all: "كل إشارات البنود",
+    red: "بنود بها مشكلة",
+    green: "بنود بإشارة خضراء",
+    unmarked: "بنود بدون إشارة"
+  };
+
+  return labels[value] || value;
+}
+
+function formatItemQuantity(value) {
+  return value === null || value === undefined || value === ""
+    ? "غير محددة"
+    : Number(value).toLocaleString("ar-SY");
+}
+
+function formatItemPrice(value) {
+  return value === null || value === undefined || value === ""
+    ? "غير محدد"
+    : `${Number(value).toLocaleString("ar-SY")} ل.س`;
+}
+
+function getRequestIssueCount(request) {
+  return (request.items || []).filter(
+    (item) => item.available === false || item.signal === "red"
+  ).length;
+}
+
+function getRequestGreenCount(request) {
+  return (request.items || []).filter((item) => item.signal === "green").length;
 }
 
 function formatInitialPrice(request) {
@@ -295,14 +637,38 @@ function getFilteredRequests() {
       (state.filters.settlement === "settled" && request.settled) ||
       (state.filters.settlement === "not-settled" && !request.settled);
 
+    const items = request.items || [];
+    const matchesItemSignal =
+      state.filters.itemSignal === "all" ||
+      (state.filters.itemSignal === "red" &&
+        items.some((item) => item.signal === "red" || item.available === false)) ||
+      (state.filters.itemSignal === "green" &&
+        items.some((item) => item.signal === "green")) ||
+      (state.filters.itemSignal === "unmarked" &&
+        items.some((item) => item.signal === "none"));
+
     const noteText = (request.notes || [])
       .map((note) => `${note.authorName} ${note.text}`)
+      .join(" ");
+
+    const itemText = items
+      .map((item) =>
+        [
+          item.name,
+          item.specifications,
+          item.origin,
+          item.quantity,
+          item.price,
+          item.action
+        ].join(" ")
+      )
       .join(" ");
 
     const searchableText = [
       request.title,
       request.id,
       request.description,
+      itemText,
       getDepartmentLabel(request.department),
       request.supplier,
       noteText
@@ -319,6 +685,7 @@ function getFilteredRequests() {
       matchesType &&
       matchesDepartment &&
       matchesSettlement &&
+      matchesItemSignal &&
       matchesQuery
     );
   });
@@ -353,6 +720,26 @@ function progressMarkup(request) {
 function requestCardMarkup(request) {
   const priceValue = formatInitialPrice(request);
   const priceClass = priceValue === "غير محدد" ? "is-empty" : "";
+  const issueCount = getRequestIssueCount(request);
+  const greenCount = getRequestGreenCount(request);
+  const itemStatusMarkup =
+    request.type === "materials"
+      ? `
+        <div class="card-item-status">
+          <span>${(request.items || []).length.toLocaleString("ar-SY")} بند</span>
+          ${
+            issueCount > 0
+              ? `<span class="item-status-chip is-red"><i class="signal-dot is-red"></i>${issueCount.toLocaleString("ar-SY")} مشكلة</span>`
+              : ""
+          }
+          ${
+            greenCount > 0
+              ? `<span class="item-status-chip is-green"><i class="signal-dot is-green"></i>${greenCount.toLocaleString("ar-SY")} أخضر</span>`
+              : ""
+          }
+        </div>
+      `
+      : "";
 
   return `
     <article
@@ -371,6 +758,8 @@ function requestCardMarkup(request) {
         <div class="card-meta">
           <span class="type-badge">${getTypeLabel(request.type)}</span>
         </div>
+
+        ${itemStatusMarkup}
       </div>
 
       <div class="card-price">
@@ -407,6 +796,10 @@ function getActiveFilterItems() {
     items.push(getSettlementLabel(state.filters.settlement));
   }
 
+  if (state.filters.itemSignal !== "all") {
+    items.push(getItemSignalFilterLabel(state.filters.itemSignal));
+  }
+
   if (state.filters.query.trim()) {
     items.push(`بحث: ${state.filters.query.trim()}`);
   }
@@ -422,6 +815,28 @@ function renderAppliedFilters() {
 
   elements.appliedFilters.innerHTML = activeItems
     .map((label) => `<span class="applied-filter">${escapeHtml(label)}</span>`)
+    .join("");
+}
+
+function renderDeletionLog() {
+  elements.deletionLogCount.textContent = state.deletionLog.length.toLocaleString("ar-SY");
+
+  if (state.deletionLog.length === 0) {
+    elements.deletionLogList.innerHTML =
+      '<p class="deletion-log__empty">لا توجد عمليات حذف مسجلة.</p>';
+    return;
+  }
+
+  elements.deletionLogList.innerHTML = state.deletionLog
+    .slice(0, 50)
+    .map((entry) => `
+      <article class="deletion-log__entry">
+        <strong>${escapeHtml(entry.title || entry.requestId || "وثيقة")}</strong>
+        <span>${escapeHtml(entry.requestNumber || entry.requestId || "—")} · ${escapeHtml(entry.typeLabel || "وثيقة")}</span>
+        <span>حذفها: ${escapeHtml(entry.deletedByName || "مستخدم غير معروف")}</span>
+        <time>${formatDate(entry.deletedAt, true)}</time>
+      </article>
+    `)
     .join("");
 }
 
@@ -453,6 +868,7 @@ function render() {
 
   elements.searchInput.value = state.filters.query;
   renderAppliedFilters();
+  renderDeletionLog();
 }
 
 function showToast(message) {
@@ -499,6 +915,7 @@ function syncFilterButtons() {
   setFilterButtonSelection("type", state.draftFilters.type);
   setFilterButtonSelection("department", state.draftFilters.department);
   setFilterButtonSelection("settlement", state.draftFilters.settlement);
+  setFilterButtonSelection("itemSignal", state.draftFilters.itemSignal);
 }
 
 function openFilters() {
@@ -627,6 +1044,143 @@ function noteMarkup(request, note) {
   `;
 }
 
+function purchaseItemSignalDot(item) {
+  if (item.signal === "green") {
+    return '<span class="signal-dot is-green" title="إشارة خضراء"></span>';
+  }
+
+  if (item.signal === "red") {
+    return '<span class="signal-dot is-red" title="إشارة حمراء"></span>';
+  }
+
+  return "";
+}
+
+function purchaseItemMarkup(request, item, index) {
+  const isMissing = item.available === false;
+
+  return `
+    <article class="purchase-item ${isMissing ? "is-missing" : ""}" data-purchase-item="${escapeHtml(item.id)}">
+      <header class="purchase-item__header">
+        <div>
+          <span class="purchase-item__number">البند ${(index + 1).toLocaleString("ar-SY")}</span>
+          <h3>
+            ${purchaseItemSignalDot(item)}
+            ${escapeHtml(item.name || `البند ${index + 1}`)}
+          </h3>
+        </div>
+        <span class="availability-badge ${isMissing ? "is-missing" : "is-available"}">
+          ${isMissing ? "غير موجود" : "موجود"}
+        </span>
+      </header>
+
+      <div class="purchase-item__specs">
+        <span>المواصفات</span>
+        <p>${escapeHtml(item.specifications || "غير محددة")}</p>
+      </div>
+
+      <div class="purchase-item__grid">
+        <div>
+          <span>المنشأ</span>
+          <strong>${escapeHtml(item.origin || "غير محدد")}</strong>
+        </div>
+        <div>
+          <span>العدد / الكمية</span>
+          <strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong>
+        </div>
+        <div>
+          <span>السعر</span>
+          <strong>${escapeHtml(formatItemPrice(item.price))}</strong>
+        </div>
+      </div>
+
+      <div class="purchase-item__controls">
+        <label class="item-availability-control">
+          <input
+            type="checkbox"
+            data-item-available="${escapeHtml(request.id)}"
+            data-item-id="${escapeHtml(item.id)}"
+            ${item.available ? "checked" : ""}
+          >
+          <span>${item.available ? "البند موجود" : "البند غير موجود"}</span>
+        </label>
+
+        <div class="item-signal-picker" aria-label="إشارة البند">
+          <span>إشارة البند</span>
+          <div>
+            <button
+              class="signal-choice ${item.signal === "none" ? "is-selected" : ""}"
+              type="button"
+              data-item-signal="none"
+              data-request-id="${escapeHtml(request.id)}"
+              data-item-id="${escapeHtml(item.id)}"
+            >بدون</button>
+            <button
+              class="signal-choice is-green ${item.signal === "green" ? "is-selected" : ""}"
+              type="button"
+              data-item-signal="green"
+              data-request-id="${escapeHtml(request.id)}"
+              data-item-id="${escapeHtml(item.id)}"
+            ><span class="signal-dot is-green"></span> خضراء</button>
+            <button
+              class="signal-choice is-red ${item.signal === "red" ? "is-selected" : ""}"
+              type="button"
+              data-item-signal="red"
+              data-request-id="${escapeHtml(request.id)}"
+              data-item-id="${escapeHtml(item.id)}"
+            ><span class="signal-dot is-red"></span> حمراء</button>
+          </div>
+        </div>
+      </div>
+
+      ${
+        isMissing
+          ? `
+            <label class="item-action-field">
+              <span>الإجراء المتبع لهذا البند</span>
+              <textarea
+                rows="3"
+                maxlength="700"
+                data-item-action="${escapeHtml(request.id)}"
+                data-item-id="${escapeHtml(item.id)}"
+                placeholder="اكتب الإجراء المتبع بسبب عدم توفر البند..."
+              >${escapeHtml(item.action || "")}</textarea>
+            </label>
+          `
+          : ""
+      }
+    </article>
+  `;
+}
+
+function materialsItemsMarkup(request) {
+  const items = request.items || [];
+
+  return `
+    <section class="purchase-items-detail">
+      <header class="purchase-items-detail__header">
+        <div>
+          <span>بنود طلب الشراء</span>
+          <strong>${items.length.toLocaleString("ar-SY")} بند</strong>
+        </div>
+        ${
+          getRequestIssueCount(request) > 0
+            ? `<span class="items-problem-count"><span class="signal-dot is-red"></span>${getRequestIssueCount(request).toLocaleString("ar-SY")} بها مشكلة</span>`
+            : ""
+        }
+      </header>
+
+      <div class="purchase-items-list">
+        ${
+          items.length > 0
+            ? items.map((item, index) => purchaseItemMarkup(request, item, index)).join("")
+            : '<p class="purchase-items-empty">لا توجد بنود في هذا الطلب.</p>'
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderDetails(requestId) {
   const request = state.requests.find((item) => item.id === requestId);
 
@@ -637,20 +1191,40 @@ function renderDetails(requestId) {
   const attachmentsMarkup =
     request.attachments && request.attachments.length > 0
       ? request.attachments
-          .map((attachment) => `
-            <article class="attachment">
-              <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
-              <p>${escapeHtml(attachment.name)}</p>
-            </article>
-          `)
+          .map((attachment) => {
+            const isImage = String(attachment.mimeType || "").startsWith("image/");
+            if (isImage) {
+              return `
+                <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+                  <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
+                  <p>${escapeHtml(attachment.name)}</p>
+                </a>
+              `;
+            }
+
+            return `
+              <a class="attachment attachment--document" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+                <span class="attachment__file-icon" aria-hidden="true">📄</span>
+                <p>${escapeHtml(attachment.name)}</p>
+                <small>فتح الملف</small>
+              </a>
+            `;
+          })
           .join("")
       : "";
 
+  const primaryDetailsMarkup =
+    request.type === "materials"
+      ? materialsItemsMarkup(request)
+      : `
+        <article class="detail-description">
+          <span>تفاصيل أمر التشغيل</span>
+          <p>${escapeHtml(request.description || "لا توجد تفاصيل.")}</p>
+        </article>
+      `;
+
   elements.detailsContent.innerHTML = `
-    <article class="detail-description">
-      <span>التفاصيل الأساسية</span>
-      <p>${escapeHtml(request.description || "لا توجد تفاصيل.")}</p>
-    </article>
+    ${primaryDetailsMarkup}
 
     <div class="detail-status">
       ${progressMarkup(request)}
@@ -664,7 +1238,7 @@ function renderDetails(requestId) {
 
       <article class="detail-box">
         <span>رقم الطلب</span>
-        <strong>${escapeHtml(request.id)}</strong>
+        <strong>${escapeHtml(request.requestNumber || request.id)}</strong>
       </article>
 
       <article class="detail-box">
@@ -710,6 +1284,13 @@ function renderDetails(requestId) {
             : "تحديد الطلب بأنه تمت تصفيته"
         }
       </button>
+
+      <button
+        class="detail-delete-button"
+        type="button"
+        data-delete-request="${escapeHtml(request.id)}"
+      >حذف الوثيقة</button>
+      <small class="delete-password-note">الحذف يتطلب كلمة المرور ورسالة تأكيد، ويتم التحقق منها داخل قاعدة البيانات.</small>
     </div>
 
     ${notesMarkup(request)}
@@ -721,7 +1302,7 @@ function renderDetails(requestId) {
           <div class="attachments">${attachmentsMarkup}</div>
         `
         : `
-          <div class="detail-grid">
+          <div class="detail-grid attachments-empty-grid">
             <article class="detail-box is-wide">
               <span>الصور المرفقة</span>
               <p>لا توجد صور مرفقة لهذا الطلب.</p>
@@ -764,100 +1345,340 @@ function closeAddForm() {
 }
 
 function generateRequestId() {
-  const numericIds = state.requests
-    .map((request) => Number(String(request.id).replace(/\D/g, "")))
-    .filter(Number.isFinite);
-
-  const nextId = Math.max(0, ...numericIds) + 1;
-
-  return `REQ-${String(nextId).padStart(3, "0")}`;
+  return crypto.randomUUID();
 }
 
-function generateNoteId(requestId) {
-  return `NOTE-${requestId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
+async function compressImageFile(file) {
+  if (!String(file.type || "").startsWith("image/")) return file;
 
-async function fileToCompressedDataUrl(file) {
-  const source = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1 && file.size <= 1_500_000) {
+      bitmap.close?.();
+      return file;
+    }
 
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
 
-  const image = await new Promise((resolve, reject) => {
-    const img = new Image();
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (value) => (value ? resolve(value) : reject(new Error("تعذر ضغط الصورة"))),
+        "image/jpeg",
+        JPEG_QUALITY
+      );
+    });
 
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = source;
-  });
-
-  const scale = Math.min(
-    1,
-    MAX_IMAGE_SIDE / Math.max(image.width, image.height)
-  );
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(image.width * scale));
-  canvas.height = Math.max(1, Math.round(image.height * scale));
-
-  const context = canvas.getContext("2d");
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-  return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now()
+    });
+  } catch (error) {
+    console.warn("تعذر ضغط الصورة؛ سيتم رفع الملف الأصلي.", error);
+    return file;
+  }
 }
 
 async function prepareSelectedAttachments(fileList) {
-  const files = [...fileList].slice(0, MAX_LOCAL_IMAGES);
+  const files = [...fileList].slice(0, MAX_ATTACHMENTS);
   const attachments = [];
 
-  for (const file of files) {
-    try {
-      const url = await fileToCompressedDataUrl(file);
-
-      attachments.push({
-        name: file.name,
-        url
-      });
-    } catch (error) {
-      console.warn("تعذر تجهيز الصورة:", file.name, error);
+  for (const originalFile of files) {
+    if (originalFile.size > MAX_FILE_BYTES && !String(originalFile.type || "").startsWith("image/")) {
+      throw new Error(`الملف «${originalFile.name}» أكبر من 10 MB.`);
     }
+
+    const file = await compressImageFile(originalFile);
+    if (file.size > MAX_FILE_BYTES) {
+      throw new Error(`الملف «${originalFile.name}» أكبر من 10 MB بعد التجهيز.`);
+    }
+
+    attachments.push({
+      file,
+      originalName: originalFile.name,
+      mimeType: file.type || originalFile.type || "application/octet-stream",
+      kind: String(file.type || originalFile.type || "").startsWith("image/") ? "image" : "document"
+    });
   }
 
   return attachments;
 }
 
-function addRequest(formData) {
+function safeStorageFileName(name) {
+  const dot = name.lastIndexOf(".");
+  const ext = dot >= 0 ? name.slice(dot).toLowerCase().replace(/[^.a-z0-9]/g, "") : "";
+  return `${crypto.randomUUID()}${ext || ""}`;
+}
+
+async function uploadSelectedAttachments(requestId) {
+  const client = getSupabase();
+
+  for (const attachment of state.selectedAttachments) {
+    const storagePath = `${requestId}/${safeStorageFileName(attachment.file.name)}`;
+    const { error: uploadError } = await client.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, attachment.file, {
+        contentType: attachment.mimeType,
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { error: metadataError } = await client.from("attachments").insert({
+      request_id: requestId,
+      storage_path: storagePath,
+      original_name: attachment.originalName,
+      mime_type: attachment.mimeType,
+      size_bytes: attachment.file.size,
+      kind: attachment.kind
+    });
+
+    if (metadataError) throw metadataError;
+  }
+}
+
+function materialItemEditorMarkup() {
+  state.materialItemSequence += 1;
+  const editorId = `material-editor-${state.materialItemSequence}`;
+
+  return `
+    <article class="material-item-editor" data-material-item-editor id="${editorId}">
+      <header class="material-item-editor__header">
+        <strong data-item-editor-title>بند شراء</strong>
+        <button class="remove-item-button" type="button" data-remove-material-item>حذف البند</button>
+      </header>
+
+      <label>
+        <span>اسم البند</span>
+        <input data-item-field="name" type="text" maxlength="120" required placeholder="مثال: كابل نحاسي 4×16 مم²">
+      </label>
+
+      <label>
+        <span>المواصفات</span>
+        <textarea data-item-field="specifications" rows="3" maxlength="700" placeholder="المقاس، النوع، المعيار أو المواصفات الفنية"></textarea>
+      </label>
+
+      <div class="material-item-editor__grid">
+        <label>
+          <span>المنشأ</span>
+          <input data-item-field="origin" type="text" maxlength="80" placeholder="مثال: سوريا">
+        </label>
+
+        <label>
+          <span>العدد / الكمية</span>
+          <input data-item-field="quantity" type="number" min="0" step="any" required placeholder="0">
+        </label>
+
+        <label class="is-wide">
+          <span>السعر (ل.س)</span>
+          <input data-item-field="price" type="number" min="0" step="1" placeholder="اختياري">
+        </label>
+      </div>
+
+      <label class="check-row material-item-available">
+        <input data-editor-available type="checkbox" checked>
+        <span>البند موجود</span>
+      </label>
+
+      <label data-editor-action-wrap hidden>
+        <span>الإجراء المتبع لهذا البند</span>
+        <textarea data-item-field="action" rows="3" maxlength="700" placeholder="ماذا سنفعل بسبب عدم توفر البند؟"></textarea>
+      </label>
+
+      <label>
+        <span>إشارة البند</span>
+        <select data-item-field="signal">
+          <option value="none">بدون إشارة</option>
+          <option value="green">دائرة خضراء</option>
+          <option value="red">دائرة حمراء</option>
+        </select>
+      </label>
+    </article>
+  `;
+}
+
+function renumberMaterialItemEditors() {
+  [...elements.materialItemsEditor.querySelectorAll("[data-material-item-editor]")]
+    .forEach((editor, index) => {
+      const title = editor.querySelector("[data-item-editor-title]");
+      if (title) title.textContent = `البند ${(index + 1).toLocaleString("ar-SY")}`;
+    });
+}
+
+function addMaterialItemEditor() {
+  elements.materialItemsEditor.insertAdjacentHTML(
+    "beforeend",
+    materialItemEditorMarkup()
+  );
+  renumberMaterialItemEditors();
+}
+
+function resetMaterialItemsEditor() {
+  elements.materialItemsEditor.innerHTML = "";
+  addMaterialItemEditor();
+}
+
+function syncRequestTypeFields() {
+  const isMaterials = elements.addRequestForm.elements.type.value === "materials";
+  const description = elements.addRequestForm.elements.description;
+
+  elements.materialsItemsSection.hidden = !isMaterials;
+  elements.workDescriptionField.hidden = isMaterials;
+
+  elements.materialsItemsSection
+    .querySelectorAll("input, textarea, select, button")
+    .forEach((control) => {
+      control.disabled = !isMaterials;
+    });
+
+  description.disabled = isMaterials;
+  description.required = !isMaterials;
+
+  if (isMaterials && elements.materialItemsEditor.children.length === 0) {
+    addMaterialItemEditor();
+  }
+}
+
+function collectMaterialItemsFromForm(requestId) {
+  const editors = [
+    ...elements.materialItemsEditor.querySelectorAll("[data-material-item-editor]")
+  ];
+
+  if (editors.length === 0) {
+    throw new Error("أضف بندًا واحدًا على الأقل إلى طلب الشراء");
+  }
+
+  return editors.map((editor, index) => {
+    const getField = (name) => editor.querySelector(`[data-item-field="${name}"]`);
+    const name = getField("name").value.trim();
+    const available = editor.querySelector("[data-editor-available]").checked;
+    const action = getField("action").value.trim();
+
+    if (!name) {
+      throw new Error(`اكتب اسم البند ${(index + 1).toLocaleString("ar-SY")}`);
+    }
+
+    if (!available && !action) {
+      throw new Error(
+        `اكتب الإجراء المتبع للبند ${(index + 1).toLocaleString("ar-SY")} لأنه غير موجود`
+      );
+    }
+
+    return normalizePurchaseItem(
+      {
+        id: `ITEM-${requestId}-${index + 1}-${Date.now()}`,
+        name,
+        specifications: getField("specifications").value.trim(),
+        origin: getField("origin").value.trim(),
+        quantity: getField("quantity").value,
+        price: getField("price").value,
+        available,
+        action,
+        signal: getField("signal").value
+      },
+      requestId,
+      index
+    );
+  });
+}
+
+function getRequestItem(requestId, itemId) {
+  const request = state.requests.find((item) => item.id === requestId);
+  const item = request?.items?.find((entry) => entry.id === itemId);
+  return { request, item };
+}
+
+async function deleteRequestWithPassword(requestId) {
+  const request = state.requests.find((item) => item.id === requestId);
+  if (!request) return;
+
+  const confirmed = window.confirm(
+    `هل أنت متأكد من حذف الوثيقة «${request.title}»؟ سيتم تسجيل عملية الحذف واسم المستخدم.`
+  );
+  if (!confirmed) return;
+
+  const password = window.prompt("أدخل كلمة مرور الحذف:");
+  if (password === null) return;
+
+  try {
+    const { error } = await getSupabase().rpc("delete_request_secure", {
+      p_request_id: requestId,
+      p_password: password
+    });
+    if (error) throw error;
+
+    closeDetails();
+    await refreshAppData({ silent: true });
+    showToast("تم حذف الوثيقة وتسجيل العملية في سجل الحذف");
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/Invalid delete password/i.test(message)) {
+      window.alert("كلمة مرور الحذف غير صحيحة.");
+    } else {
+      handleDatabaseError(error, "تعذر حذف الوثيقة");
+    }
+  }
+}
+
+async function addRequest(formData) {
+  const client = getSupabase();
   const status = formData.get("status");
   const isPurchased = status === "purchased";
   const initialPriceValue = formData.get("initialPrice");
+  const type = formData.get("type");
+  const materialItems = type === "materials" ? collectMaterialItemsFromForm("new") : [];
+  const currentOrders = state.requests.map((request) => Number(request.sortOrder || 0));
+  const sortOrder = currentOrders.length ? Math.min(...currentOrders) - 100 : 0;
 
-  const request = normalizeRequest({
-    id: generateRequestId(),
-    title: formData.get("title").trim(),
-    type: formData.get("type"),
-    department: formData.get("department"),
-    created: true,
-    quotes: status === "quotes" || isPurchased,
-    purchased: isPurchased,
-    settled: formData.get("settled") === "on",
-    initialPrice:
-      initialPriceValue !== ""
-        ? Number(initialPriceValue)
-        : null,
-    description: formData.get("description").trim(),
-    createdAt: new Date().toISOString().slice(0, 10),
-    offersCount: status === "quotes" || isPurchased ? 1 : 0,
-    supplier: "غير محدد",
-    notes: [],
-    attachments: structuredClone(state.selectedAttachments)
-  });
+  const itemsPayload = materialItems.map((item, index) => ({
+    item_name: item.name,
+    specifications: item.specifications,
+    origin: item.origin,
+    quantity: item.quantity,
+    unit: item.unit || "",
+    price: item.price,
+    available: item.available,
+    action_if_unavailable: item.action,
+    signal: item.signal,
+    sort_order: index
+  }));
 
-  state.requests.unshift(request);
-  saveRequests();
-  render();
+  const { data: requestId, error: requestError } = await client.rpc(
+    "create_request_secure",
+    {
+      p_title: String(formData.get("title") || "").trim(),
+      p_request_type: type,
+      p_department_code: formData.get("department"),
+      p_description: type === "work-order" ? String(formData.get("description") || "").trim() : "",
+      p_initial_price: initialPriceValue !== "" ? Number(initialPriceValue) : null,
+      p_has_quotes: status === "quotes" || isPurchased,
+      p_is_purchased: isPurchased,
+      p_is_settled: formData.get("settled") === "on",
+      p_offers_count: status === "quotes" || isPurchased ? 1 : 0,
+      p_sort_order: sortOrder,
+      p_items: itemsPayload
+    }
+  );
+
+  if (requestError) throw requestError;
+
+  let attachmentWarning = "";
+  if (state.selectedAttachments.length) {
+    try {
+      await uploadSelectedAttachments(requestId);
+    } catch (error) {
+      console.error("تعذر رفع بعض المرفقات", error);
+      attachmentWarning = "تم حفظ الطلب، لكن تعذر رفع بعض المرفقات. يمكنك إعادة إضافتها لاحقًا بعد تجهيز تعديل المرفقات.";
+    }
+  }
+
+  await refreshAppData({ silent: true });
+  return { requestId, attachmentWarning };
 }
 
 function updateGlobalOrderFromVisibleCards() {
@@ -936,7 +1757,7 @@ function installLongPressReorder() {
       document.body.classList.remove("is-reordering");
       updateGlobalOrderFromVisibleCards();
       state.suppressTapUntil = Date.now() + 500;
-      showToast("تم حفظ الترتيب محليًا");
+      showToast("تم تحديث الترتيب وسيتم حفظه في القاعدة");
       render();
     }
 
@@ -1038,7 +1859,8 @@ elements.applyFiltersButton.addEventListener("click", () => {
     status: state.draftFilters.status,
     type: state.draftFilters.type,
     department: state.draftFilters.department,
-    settlement: state.draftFilters.settlement
+    settlement: state.draftFilters.settlement,
+    itemSignal: state.draftFilters.itemSignal
   };
 
   saveFilters();
@@ -1116,41 +1938,87 @@ elements.requestList.addEventListener("keydown", (event) => {
   }
 });
 
-elements.detailsContent.addEventListener("click", (event) => {
-  const settlementButton = event.target.closest("[data-toggle-settlement]");
+elements.detailsContent.addEventListener("click", async (event) => {
+  const deleteRequestButton = event.target.closest("[data-delete-request]");
 
+  if (deleteRequestButton) {
+    await deleteRequestWithPassword(deleteRequestButton.dataset.deleteRequest);
+    return;
+  }
+
+  const signalButton = event.target.closest("[data-item-signal]");
+  if (signalButton) {
+    const { request, item } = getRequestItem(
+      signalButton.dataset.requestId,
+      signalButton.dataset.itemId
+    );
+    if (!request || !item) return;
+
+    const previous = item.signal;
+    const next = signalButton.dataset.itemSignal;
+    item.signal = next;
+    render();
+    renderDetails(request.id);
+
+    const { error } = await getSupabase()
+      .from("purchase_items")
+      .update({ signal: next })
+      .eq("id", item.id);
+
+    if (error) {
+      item.signal = previous;
+      render();
+      renderDetails(request.id);
+      handleDatabaseError(error);
+      return;
+    }
+
+    showToast(
+      next === "red"
+        ? "تمت إضافة الإشارة الحمراء للبند"
+        : next === "green"
+          ? "تمت إضافة الإشارة الخضراء للبند"
+          : "تمت إزالة إشارة البند"
+    );
+    return;
+  }
+
+  const settlementButton = event.target.closest("[data-toggle-settlement]");
   if (settlementButton) {
     const requestId = settlementButton.dataset.toggleSettlement;
     const request = state.requests.find((item) => item.id === requestId);
+    if (!request) return;
 
-    if (request) {
-      request.settled = !request.settled;
-      saveRequests();
+    const previous = request.settled;
+    request.settled = !request.settled;
+    render();
+    renderDetails(requestId);
+
+    const { error } = await getSupabase()
+      .from("requests")
+      .update({ is_settled: request.settled })
+      .eq("id", requestId);
+
+    if (error) {
+      request.settled = previous;
       render();
       renderDetails(requestId);
-      showToast(
-        request.settled
-          ? "تم تحديد الطلب بأنه تمت تصفيته"
-          : "تم إلغاء حالة التصفية"
-      );
+      handleDatabaseError(error);
+      return;
     }
 
+    showToast(request.settled ? "تم تحديد الطلب بأنه تمت تصفيته" : "تم إلغاء حالة التصفية");
     return;
   }
 
   const openNoteButton = event.target.closest("[data-open-note-form]");
-
   if (openNoteButton) {
     state.noteFormOpen = true;
     state.editingNoteId = null;
     renderDetails(openNoteButton.dataset.openNoteForm);
-
     window.setTimeout(() => {
-      elements.detailsContent
-        .querySelector("[data-add-note-form] textarea")
-        ?.focus();
+      elements.detailsContent.querySelector("[data-add-note-form] textarea")?.focus();
     }, 50);
-
     return;
   }
 
@@ -1161,18 +2029,13 @@ elements.detailsContent.addEventListener("click", (event) => {
   }
 
   const editNoteButton = event.target.closest("[data-edit-note]");
-
   if (editNoteButton) {
     state.editingNoteId = editNoteButton.dataset.editNote;
     state.noteFormOpen = false;
     renderDetails(state.activeDetailsId);
-
     window.setTimeout(() => {
-      elements.detailsContent
-        .querySelector("[data-edit-note-form] textarea")
-        ?.focus();
+      elements.detailsContent.querySelector("[data-edit-note-form] textarea")?.focus();
     }, 50);
-
     return;
   }
 
@@ -1183,53 +2046,118 @@ elements.detailsContent.addEventListener("click", (event) => {
   }
 
   const deleteNoteButton = event.target.closest("[data-delete-note]");
-
   if (deleteNoteButton) {
-    const request = state.requests.find(
-      (item) => item.id === state.activeDetailsId
-    );
-
-    const note = request?.notes.find(
-      (item) => item.id === deleteNoteButton.dataset.deleteNote
-    );
-
+    const request = state.requests.find((item) => item.id === state.activeDetailsId);
+    const note = request?.notes.find((item) => item.id === deleteNoteButton.dataset.deleteNote);
     if (!request || !note || note.authorId !== CURRENT_USER.id) return;
+    if (!window.confirm("هل تريد حذف هذه الملاحظة؟")) return;
 
-    const confirmed = window.confirm("هل تريد حذف هذه الملاحظة؟");
-
-    if (!confirmed) return;
+    const { error } = await getSupabase().from("notes").delete().eq("id", note.id);
+    if (error) {
+      handleDatabaseError(error, "تعذر حذف الملاحظة");
+      return;
+    }
 
     request.notes = request.notes.filter((item) => item.id !== note.id);
-    saveRequests();
     render();
     renderDetails(request.id);
     showToast("تم حذف الملاحظة");
   }
 });
 
-elements.detailsContent.addEventListener("submit", (event) => {
+elements.detailsContent.addEventListener("change", async (event) => {
+  const availabilityInput = event.target.closest("[data-item-available]");
+  if (availabilityInput) {
+    const { request, item } = getRequestItem(
+      availabilityInput.dataset.itemAvailable,
+      availabilityInput.dataset.itemId
+    );
+    if (!request || !item) return;
+
+    const previous = item.available;
+    item.available = availabilityInput.checked;
+    render();
+    renderDetails(request.id);
+
+    if (!item.available && !String(item.action || "").trim()) {
+      showToast("اكتب الإجراء المتبع ليتم حفظ حالة «غير موجود»");
+      window.setTimeout(() => {
+        elements.detailsContent.querySelector(`[data-item-action="${request.id}"][data-item-id="${item.id}"]`)?.focus();
+      }, 50);
+      return;
+    }
+
+    const { error } = await getSupabase()
+      .from("purchase_items")
+      .update({ available: item.available })
+      .eq("id", item.id);
+
+    if (error) {
+      item.available = previous;
+      render();
+      renderDetails(request.id);
+      handleDatabaseError(error);
+      return;
+    }
+
+    showToast(item.available ? "تم تحديد البند بأنه موجود" : "تم تحديد البند بأنه غير موجود");
+    return;
+  }
+
+  const actionField = event.target.closest("[data-item-action]");
+  if (actionField) {
+    const { request, item } = getRequestItem(
+      actionField.dataset.itemAction,
+      actionField.dataset.itemId
+    );
+    if (!request || !item) return;
+
+    const action = actionField.value.trim();
+    if (!action && item.available === false) {
+      showToast("الإجراء مطلوب عندما يكون البند غير موجود");
+      return;
+    }
+
+    const { error } = await getSupabase()
+      .from("purchase_items")
+      .update({ action_if_unavailable: action, available: item.available })
+      .eq("id", item.id);
+
+    if (error) {
+      handleDatabaseError(error, "تعذر حفظ الإجراء");
+      return;
+    }
+
+    item.action = action;
+    render();
+    renderDetails(request.id);
+    showToast("تم حفظ الإجراء المتبع للبند");
+  }
+});
+
+elements.detailsContent.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const addForm = event.target.closest("[data-add-note-form]");
-
   if (addForm) {
     const requestId = addForm.dataset.addNoteForm;
     const request = state.requests.find((item) => item.id === requestId);
-    const text = new FormData(addForm).get("noteText").trim();
-
+    const text = String(new FormData(addForm).get("noteText") || "").trim();
     if (!request || !text) return;
 
-    request.notes.push({
-      id: generateNoteId(requestId),
-      text,
-      authorId: CURRENT_USER.id,
-      authorName: CURRENT_USER.name,
-      createdAt: new Date().toISOString(),
-      updatedAt: null
-    });
+    const { data, error } = await getSupabase()
+      .from("notes")
+      .insert({ request_id: requestId, body: text, author_id: CURRENT_USER.id })
+      .select("id, body, author_id, author_name, created_at, updated_at")
+      .single();
 
+    if (error) {
+      handleDatabaseError(error, "تعذر إضافة الملاحظة");
+      return;
+    }
+
+    request.notes.push(dbNoteToApp(data));
     state.noteFormOpen = false;
-    saveRequests();
     render();
     renderDetails(requestId);
     showToast("تمت إضافة الملاحظة");
@@ -1237,28 +2165,27 @@ elements.detailsContent.addEventListener("submit", (event) => {
   }
 
   const editForm = event.target.closest("[data-edit-note-form]");
-
   if (editForm) {
     const requestId = editForm.dataset.editNoteForm;
     const request = state.requests.find((item) => item.id === requestId);
-    const note = request?.notes.find(
-      (item) => item.id === editForm.dataset.noteId
-    );
-    const text = new FormData(editForm).get("noteText").trim();
+    const note = request?.notes.find((item) => item.id === editForm.dataset.noteId);
+    const text = String(new FormData(editForm).get("noteText") || "").trim();
+    if (!request || !note || note.authorId !== CURRENT_USER.id || !text) return;
 
-    if (
-      !request ||
-      !note ||
-      note.authorId !== CURRENT_USER.id ||
-      !text
-    ) {
+    const { data, error } = await getSupabase()
+      .from("notes")
+      .update({ body: text })
+      .eq("id", note.id)
+      .select("id, body, author_id, author_name, created_at, updated_at")
+      .single();
+
+    if (error) {
+      handleDatabaseError(error, "تعذر تعديل الملاحظة");
       return;
     }
 
-    note.text = text;
-    note.updatedAt = new Date().toISOString();
+    Object.assign(note, dbNoteToApp(data));
     state.editingNoteId = null;
-    saveRequests();
     render();
     renderDetails(requestId);
     showToast("تم تعديل الملاحظة");
@@ -1309,67 +2236,107 @@ document.querySelectorAll("[data-close-filters]").forEach((element) => {
 
 elements.addRequestButton.addEventListener("click", openAddForm);
 
+elements.addMaterialItemButton.addEventListener("click", () => {
+  addMaterialItemEditor();
+
+  elements.materialItemsEditor.lastElementChild
+    ?.querySelector('[data-item-field="name"]')
+    ?.focus();
+});
+
+elements.addRequestForm.elements.type.addEventListener("change", syncRequestTypeFields);
+
+elements.materialItemsEditor.addEventListener("click", (event) => {
+  const removeButton = event.target.closest("[data-remove-material-item]");
+  if (!removeButton) return;
+
+  const editors = elements.materialItemsEditor.querySelectorAll(
+    "[data-material-item-editor]"
+  );
+
+  if (editors.length <= 1) {
+    showToast("يجب أن يحتوي طلب الشراء على بند واحد على الأقل");
+    return;
+  }
+
+  removeButton.closest("[data-material-item-editor]")?.remove();
+  renumberMaterialItemEditors();
+});
+
+elements.materialItemsEditor.addEventListener("change", (event) => {
+  const availability = event.target.closest("[data-editor-available]");
+  if (!availability) return;
+
+  const editor = availability.closest("[data-material-item-editor]");
+  const actionWrap = editor?.querySelector("[data-editor-action-wrap]");
+  const labelText = availability.closest("label")?.querySelector("span");
+
+  if (actionWrap) actionWrap.hidden = availability.checked;
+  if (labelText) {
+    labelText.textContent = availability.checked ? "البند موجود" : "البند غير موجود";
+  }
+});
+
 elements.attachmentsInput.addEventListener("change", async (event) => {
   const fileCount = event.target.files.length;
 
   if (fileCount === 0) {
     state.selectedAttachments = [];
     elements.attachmentsPreviewText.textContent =
-      "تحفظ الصور المصغّرة محليًا في هذه النسخة التجريبية.";
+      "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.";
     return;
   }
 
-  elements.attachmentsPreviewText.textContent =
-    "جارٍ تجهيز الصور وحفظ نسخ مصغّرة منها...";
+  elements.attachmentsPreviewText.textContent = "جارٍ تجهيز الملفات...";
 
-  state.selectedAttachments = await prepareSelectedAttachments(
-    event.target.files
-  );
+  try {
+    state.selectedAttachments = await prepareSelectedAttachments(event.target.files);
+    elements.attachmentsPreviewText.textContent = state.selectedAttachments.length > 0
+      ? `تم تجهيز ${state.selectedAttachments.length} ملف/صورة للرفع.`
+      : "تعذر تجهيز الملفات المختارة.";
+  } catch (error) {
+    state.selectedAttachments = [];
+    handleDatabaseError(error, "تعذر تجهيز الملفات");
+  }
 
-  elements.attachmentsPreviewText.textContent =
-    state.selectedAttachments.length > 0
-      ? `تم تجهيز ${state.selectedAttachments.length} صورة للحفظ المحلي.`
-      : "تعذر تجهيز الصور المختارة.";
-
-  if (fileCount > MAX_LOCAL_IMAGES) {
-    showToast(`تم اعتماد أول ${MAX_LOCAL_IMAGES} صور فقط`);
+  if (fileCount > MAX_ATTACHMENTS) {
+    showToast(`تم اعتماد أول ${MAX_ATTACHMENTS} ملفات فقط`);
   }
 });
 
-elements.addRequestForm.addEventListener("submit", (event) => {
+elements.addRequestForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
+  const submitButton = elements.addRequestForm.querySelector('button[type="submit"]');
   const formData = new FormData(elements.addRequestForm);
+  submitButton.disabled = true;
+  submitButton.textContent = "جارٍ الحفظ...";
 
+  let result;
   try {
-    addRequest(formData);
+    result = await addRequest(formData);
   } catch (error) {
-    console.error(error);
-    showToast("تعذر الحفظ؛ قد تكون مساحة التخزين المحلي ممتلئة");
+    handleDatabaseError(error, "تعذر إضافة الطلب");
+    submitButton.disabled = false;
+    submitButton.textContent = "إضافة الطلب";
     return;
   }
 
   elements.addRequestForm.reset();
+  resetMaterialItemsEditor();
+  syncRequestTypeFields();
   state.selectedAttachments = [];
   elements.attachmentsPreviewText.textContent =
-    "تحفظ الصور المصغّرة محليًا في هذه النسخة التجريبية.";
+    "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.";
+  submitButton.disabled = false;
+  submitButton.textContent = "إضافة الطلب";
 
   closeAddForm();
-  showToast("تمت إضافة الطلب وحفظه محليًا");
-});
-
-elements.resetDataButton.addEventListener("click", () => {
-  const confirmed = window.confirm(
-    "سيتم حذف التغييرات المحلية وإعادة البيانات التجريبية. هل تريد المتابعة؟"
-  );
-
-  if (!confirmed) return;
-
-  localStorage.removeItem(DATA_STORAGE_KEY);
-  state.requests = cloneDefaultRequests();
-  saveRequests();
-  render();
-  showToast("تمت إعادة البيانات التجريبية");
+  if (result?.attachmentWarning) {
+    window.alert(result.attachmentWarning);
+  } else {
+    showToast("تمت إضافة الطلب إلى قاعدة البيانات المشتركة");
+  }
 });
 
 window.addEventListener("keydown", (event) => {
@@ -1388,5 +2355,51 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+elements.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const email = resolveLoginIdentifier(elements.authIdentifier.value);
+  const password = elements.authPassword.value;
+  if (!email || !password) return;
+
+  elements.authSubmit.disabled = true;
+  elements.authSubmit.textContent = "جارٍ الدخول...";
+  setAuthMessage("جارٍ التحقق من الحساب...");
+
+  const { data, error } = await getSupabase().auth.signInWithPassword({ email, password });
+
+  elements.authSubmit.disabled = false;
+  elements.authSubmit.textContent = "دخول";
+
+  if (error) {
+    const message = /invalid login credentials/i.test(String(error.message))
+      ? "اسم المستخدم أو كلمة المرور غير صحيحة."
+      : error.message;
+    setAuthMessage(message, true);
+    return;
+  }
+
+  elements.authPassword.value = "";
+  await enterAuthenticatedApp(data.session);
+});
+
+elements.logoutButton.addEventListener("click", async () => {
+  if (!window.confirm("هل تريد تسجيل الخروج؟")) return;
+  await getSupabase().auth.signOut();
+});
+
+elements.refreshButton.addEventListener("click", () => refreshAppData());
+
+window.addEventListener("focus", () => {
+  if (canAutoRefresh()) refreshAppData({ silent: true });
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (canAutoRefresh()) refreshAppData({ silent: true });
+});
+
+resetMaterialItemsEditor();
+syncRequestTypeFields();
 installLongPressReorder();
 render();
+initializeAuthentication();

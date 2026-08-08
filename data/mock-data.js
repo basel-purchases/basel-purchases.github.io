@@ -9,7 +9,41 @@ window.MOCK_PURCHASE_REQUESTS = [
     purchased: false,
     settled: false,
     initialPrice: 27500000,
-    description: "تأمين كابلات نحاسية بمقاسات مختلفة لاستكمال التمديدات الكهربائية في الموقع الجديد، مع مراعاة المواصفات الفنية المعتمدة وكميات كل مقاس.",
+    items: [
+      {
+        id: "ITEM-026-1",
+        name: "كابل نحاسي 4×16 مم²",
+        specifications: "كابل قدرة نحاسي مع عازل مطابق للمواصفات الفنية المعتمدة.",
+        origin: "سوريا",
+        quantity: 300,
+        price: 9800000,
+        available: true,
+        action: "",
+        signal: "green"
+      },
+      {
+        id: "ITEM-026-2",
+        name: "كابل نحاسي 4×25 مم²",
+        specifications: "كابل قدرة نحاسي للاستخدام في تمديدات الموقع الجديد.",
+        origin: "تركيا",
+        quantity: 200,
+        price: 11200000,
+        available: true,
+        action: "",
+        signal: "none"
+      },
+      {
+        id: "ITEM-026-3",
+        name: "كابل نحاسي 4×35 مم²",
+        specifications: "كابل قدرة نحاسي حسب المخطط والكشف الفني.",
+        origin: "تركيا",
+        quantity: 100,
+        price: 6500000,
+        available: true,
+        action: "",
+        signal: "none"
+      }
+    ],
     createdAt: "2026-07-29",
     offersCount: 3,
     supplier: "لم يتم الاختيار بعد",
@@ -80,7 +114,52 @@ window.MOCK_PURCHASE_REQUESTS = [
     purchased: false,
     settled: false,
     initialPrice: 12100000,
-    description: "خوذ وقفازات ونظارات حماية وسترات عاكسة للعاملين في المخزن، وفق المقاسات والكميات المبينة في الكشف المرفق.",
+    items: [
+      {
+        id: "ITEM-024-1",
+        name: "خوذ سلامة",
+        specifications: "خوذ حماية للعمل الميداني مع رباط تثبيت قابل للضبط.",
+        origin: "الصين",
+        quantity: 20,
+        price: 3000000,
+        available: true,
+        action: "",
+        signal: "green"
+      },
+      {
+        id: "ITEM-024-2",
+        name: "قفازات حماية",
+        specifications: "قفازات عمل مقاومة للاهتراء بالمقاسات المطلوبة.",
+        origin: "تركيا",
+        quantity: 50,
+        price: 2500000,
+        available: false,
+        action: "البحث عن منشأ بديل بنفس المواصفة وإحضار عرض سعر جديد.",
+        signal: "red"
+      },
+      {
+        id: "ITEM-024-3",
+        name: "نظارات حماية",
+        specifications: "عدسات شفافة مقاومة للخدش ومناسبة للاستخدام الصناعي.",
+        origin: "الصين",
+        quantity: 20,
+        price: 2200000,
+        available: true,
+        action: "",
+        signal: "none"
+      },
+      {
+        id: "ITEM-024-4",
+        name: "سترات عاكسة",
+        specifications: "سترات عالية الوضوح بمقاسات مختلفة للعاملين في المخزن.",
+        origin: "سوريا",
+        quantity: 20,
+        price: 4400000,
+        available: true,
+        action: "",
+        signal: "none"
+      }
+    ],
     createdAt: "2026-07-24",
     offersCount: 0,
     supplier: "—",
@@ -127,7 +206,41 @@ window.MOCK_PURCHASE_REQUESTS = [
     purchased: true,
     settled: false,
     initialPrice: 3150000,
-    description: "أحبار أصلية لثلاث طابعات مستخدمة في الإدارة والمحاسبة مع بيان أرقام الموديلات والكميات المطلوبة.",
+    items: [
+      {
+        id: "ITEM-022-1",
+        name: "حبر طابعة الإدارة",
+        specifications: "حبر أصلي متوافق مع موديل الطابعة المسجل في الكشف.",
+        origin: "اليابان",
+        quantity: 2,
+        price: 1050000,
+        available: true,
+        action: "",
+        signal: "green"
+      },
+      {
+        id: "ITEM-022-2",
+        name: "حبر طابعة المحاسبة",
+        specifications: "حبر أصلي متوافق مع موديل الطابعة المسجل في الكشف.",
+        origin: "اليابان",
+        quantity: 2,
+        price: 1200000,
+        available: true,
+        action: "",
+        signal: "none"
+      },
+      {
+        id: "ITEM-022-3",
+        name: "حبر الطابعة الاحتياطية",
+        specifications: "حبر أصلي مطابق لرقم الموديل المعتمد.",
+        origin: "الصين",
+        quantity: 1,
+        price: 900000,
+        available: true,
+        action: "",
+        signal: "none"
+      }
+    ],
     createdAt: "2026-07-18",
     offersCount: 3,
     supplier: "شركة المكتب الحديث",
@@ -182,7 +295,19 @@ window.MOCK_PURCHASE_REQUESTS = [
     purchased: true,
     settled: true,
     initialPrice: 1540000,
-    description: "بطاريات صناعية قابلة للشحن لأجهزة القياس المحمولة، بنفس المواصفات والجهد المستخدم حاليًا.",
+    items: [
+      {
+        id: "ITEM-020-1",
+        name: "بطاريات أجهزة القياس",
+        specifications: "بطاريات صناعية قابلة للشحن بنفس الجهد والمواصفات المستخدمة حاليًا.",
+        origin: "ألمانيا",
+        quantity: 8,
+        price: 1540000,
+        available: true,
+        action: "",
+        signal: "green"
+      }
+    ],
     createdAt: "2026-07-12",
     offersCount: 2,
     supplier: "المورد التقني",
