@@ -384,6 +384,39 @@ textarea:focus-visible,
   letter-spacing: -2px;
 }
 
+.card-priority-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.move-request-top-button {
+  display: inline-flex;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  border-radius: 11px;
+  background: rgba(37, 99, 235, 0.16);
+  color: #dbeafe;
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.move-request-top-button:hover {
+  background: rgba(37, 99, 235, 0.28);
+}
+
+.move-request-top-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1574,6 +1607,16 @@ body.has-overlay {
   color: #bae6fd;
 }
 
+.materials-items-form__footer {
+  margin-top: 12px;
+}
+
+.add-item-button--bottom {
+  width: 100%;
+  min-height: 44px;
+  font-size: 12px;
+}
+
 .remove-item-button {
   border: 1px solid rgba(251, 113, 133, 0.24);
   background: rgba(190, 24, 93, 0.1);
@@ -1903,6 +1946,20 @@ body.has-overlay {
   border-color: rgba(56, 189, 248, 0.34);
   background: rgba(14, 165, 233, 0.14);
   color: #bae6fd;
+}
+
+.purchase-items-detail__bottom-action {
+  margin-top: 12px;
+}
+
+.add-existing-item-button--bottom {
+  width: 100%;
+  min-height: 46px;
+  font-size: 12px;
+}
+
+.purchase-item--new-bottom {
+  margin-top: 12px;
 }
 
 .edit-item-button {

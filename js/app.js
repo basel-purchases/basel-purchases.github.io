@@ -148,7 +148,7 @@ function normalizeOptionalNumber(value) {
 }
 
 function isValidManualRequestNumber(value) {
-  return /^\d{3,}$/.test(String(value || "").trim());
+  return String(value || "").trim().length > 0;
 }
 
 function normalizePurchaseItem(item, requestId, index) {
@@ -356,11 +356,11 @@ function handleDatabaseError(error, prefix = "تعذر حفظ التغيير") {
   const friendly = raw.includes("JWT")
     ? "انتهت جلسة الدخول. سجّل الدخول من جديد."
     : isDuplicateRequestNumber
-      ? "رقم الطلب مستخدم مسبقًا. اختر رقمًا آخر."
+      ? "رقم الإضبارة / الطلب مستخدم مسبقًا. اختر قيمة أخرى."
       : /Request number must contain at least 3 digits/i.test(raw)
-        ? "رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر."
+        ? "قاعدة البيانات ما زالت تستخدم تحقق الإصدار القديم لرقم الإضبارة. نفّذ SQL الخاص بـ V9.2."
         : /Request number is required/i.test(raw)
-          ? "رقم الطلب مطلوب."
+          ? "رقم الإضبارة / الطلب مطلوب."
           : raw || prefix;
   showToast(`${prefix}: ${friendly}`);
 }
@@ -556,6 +556,38 @@ async function persistRequestOrder() {
   const results = await Promise.all(updates);
   const failed = results.find((result) => result.error);
   if (failed?.error) throw failed.error;
+}
+
+async function moveRequestToTop(requestId) {
+  const requestIndex = state.requests.findIndex((request) => request.id === requestId);
+  if (requestIndex < 0) return;
+
+  if (requestIndex === 0) {
+    showToast("الطلب موجود بالفعل في أعلى الأولوية");
+    return;
+  }
+
+  const currentOrders = state.requests
+    .map((request) => Number(request.sortOrder))
+    .filter(Number.isFinite);
+  const nextTopOrder = currentOrders.length ? Math.min(...currentOrders) - 100 : -100;
+  const [request] = state.requests.splice(requestIndex, 1);
+  request.sortOrder = nextTopOrder;
+  state.requests.unshift(request);
+  render();
+
+  const { error } = await getSupabase()
+    .from("requests")
+    .update({ sort_order: nextTopOrder })
+    .eq("id", requestId);
+
+  if (error) {
+    await refreshAppData({ silent: true });
+    throw error;
+  }
+
+  state.suppressTapUntil = Date.now() + 350;
+  showToast("تم نقل الطلب إلى أعلى الأولوية");
 }
 
 function canAutoRefresh() {
@@ -900,7 +932,16 @@ function requestCardMarkup(request) {
       <div class="card-main">
         <div class="card-title-row">
           <h3 class="request-title">${escapeHtml(request.title)}</h3>
-          <span class="drag-grip" aria-hidden="true">⠿</span>
+          <div class="card-priority-actions">
+            <button
+              class="move-request-top-button"
+              type="button"
+              data-move-request-top="${escapeHtml(request.id)}"
+              aria-label="نقل الطلب إلى أعلى الأولوية"
+              title="نقل إلى أعلى الأولوية"
+            >↑</button>
+            <span class="drag-grip" aria-hidden="true">⠿</span>
+          </div>
         </div>
 
         <div class="card-meta">
@@ -1286,9 +1327,9 @@ function requestEditFormMarkup(request) {
 
       <div class="request-details-edit-form__grid">
         <label>
-          <span>رقم الطلب</span>
-          <input name="requestNumber" type="text" inputmode="numeric" autocomplete="off" value="${escapeHtml(request.requestNumber || "")}">
-          <small>عند تغيير الرقم يجب أن يكون 3 أرقام أو أكثر، ويجب ألا يكون مستخدمًا لطلب آخر.</small>
+          <span>رقم الإضبارة / الطلب</span>
+          <input name="requestNumber" type="text" autocomplete="off" value="${escapeHtml(request.requestNumber || "")}">
+          <small>نص حر مثل 171-172 أو 171/172 أو أي صيغة أخرى، ويجب ألا يكون مستخدمًا لطلب آخر.</small>
         </label>
 
         <label>
@@ -1328,7 +1369,7 @@ function requestEditFormMarkup(request) {
 
         <label class="is-wide">
           <span>السعر النهائي (ل.س)</span>
-          <input name="finalPrice" type="number" min="0" step="1" ${isMaterials ? "readonly" : ""} value="${finalPrice === null || finalPrice === undefined ? "" : escapeHtml(finalPrice)}">
+          <input name="finalPrice" type="number" min="0" step="any" inputmode="decimal" ${isMaterials ? "readonly" : ""} value="${finalPrice === null || finalPrice === undefined ? "" : escapeHtml(finalPrice)}">
           ${isMaterials ? '<small>يحسب تلقائيًا من مجموع أسعار البنود.</small>' : ""}
         </label>
       </div>
@@ -1381,7 +1422,7 @@ function purchaseItemEditFormMarkup(request, item, index, isNew = false) {
 
       <label class="is-wide">
         <span>اسم البند</span>
-        <input data-detail-item-field="name" name="name" type="text" maxlength="120" required value="${escapeHtml(current.name || "")}">
+        <input data-detail-item-field="name" name="name" type="text" required value="${escapeHtml(current.name || "")}">
       </label>
 
       <label class="is-wide">
@@ -1407,7 +1448,7 @@ function purchaseItemEditFormMarkup(request, item, index, isNew = false) {
 
         <label>
           <span>سعر آخر إدخال (ل.س)</span>
-          <input data-detail-item-field="lastEntryPrice" name="lastEntryPrice" type="number" min="0" step="1" value="${current.lastEntryPrice === null || current.lastEntryPrice === undefined ? "" : escapeHtml(current.lastEntryPrice)}" placeholder="هذا أو السعر الفردي">
+          <input data-detail-item-field="lastEntryPrice" name="lastEntryPrice" type="number" min="0" step="any" inputmode="decimal" value="${current.lastEntryPrice === null || current.lastEntryPrice === undefined ? "" : escapeHtml(current.lastEntryPrice)}" placeholder="هذا أو السعر الفردي">
         </label>
 
         <label>
@@ -1417,12 +1458,12 @@ function purchaseItemEditFormMarkup(request, item, index, isNew = false) {
 
         <label>
           <span>السعر الفردي (ل.س)</span>
-          <input data-detail-item-field="unitPrice" name="unitPrice" type="number" min="0" step="1" value="${current.unitPrice === null || current.unitPrice === undefined ? "" : escapeHtml(current.unitPrice)}" placeholder="هذا أو سعر آخر إدخال">
+          <input data-detail-item-field="unitPrice" name="unitPrice" type="number" min="0" step="any" inputmode="decimal" value="${current.unitPrice === null || current.unitPrice === undefined ? "" : escapeHtml(current.unitPrice)}" placeholder="هذا أو سعر آخر إدخال">
         </label>
 
         <label class="is-wide calculated-total-field">
           <span>السعر الإجمالي (ل.س)</span>
-          <input data-detail-item-field="totalPrice" name="totalPrice" type="number" min="0" step="1" readonly value="${current.totalPrice === null || current.totalPrice === undefined ? "" : escapeHtml(current.totalPrice)}">
+          <input data-detail-item-field="totalPrice" name="totalPrice" type="number" min="0" step="any" inputmode="decimal" readonly value="${current.totalPrice === null || current.totalPrice === undefined ? "" : escapeHtml(current.totalPrice)}">
         </label>
       </div>
 
@@ -1582,31 +1623,34 @@ function materialsItemsMarkup(request) {
           <span>بنود طلب الشراء</span>
           <strong>${items.length.toLocaleString("ar-SY")} بند</strong>
         </div>
-        <div class="purchase-items-detail__actions">
-          ${
-            getRequestIssueCount(request) > 0
-              ? `<span class="items-problem-count"><span class="signal-dot is-red"></span>${getRequestIssueCount(request).toLocaleString("ar-SY")} بها مشكلة</span>`
-              : ""
-          }
-          <button class="add-existing-item-button" type="button" data-open-add-purchase-item="${escapeHtml(request.id)}">＋ إضافة بند</button>
-        </div>
+        ${
+          getRequestIssueCount(request) > 0
+            ? `<span class="items-problem-count"><span class="signal-dot is-red"></span>${getRequestIssueCount(request).toLocaleString("ar-SY")} بها مشكلة</span>`
+            : ""
+        }
       </header>
 
+      <div class="purchase-items-list">
+        ${
+          items.length > 0
+            ? items.map((item, index) => purchaseItemMarkup(request, item, index)).join("")
+            : '<p class="purchase-items-empty">لا توجد بنود في هذا الطلب. استخدم زر «إضافة بند جديد» في الأسفل لإضافة أول بند.</p>'
+        }
+      </div>
+
       ${isAdding ? `
-        <article class="purchase-item purchase-item--new is-expanded">
+        <article class="purchase-item purchase-item--new is-expanded purchase-item--new-bottom">
           <div class="purchase-item__expanded">
             ${purchaseItemEditFormMarkup(request, null, items.length, true)}
           </div>
         </article>
       ` : ""}
 
-      <div class="purchase-items-list">
-        ${
-          items.length > 0
-            ? items.map((item, index) => purchaseItemMarkup(request, item, index)).join("")
-            : '<p class="purchase-items-empty">لا توجد بنود في هذا الطلب. اضغط «إضافة بند» لإضافة أول بند.</p>'
-        }
-      </div>
+      ${isAdding ? "" : `
+        <div class="purchase-items-detail__bottom-action">
+          <button class="add-existing-item-button add-existing-item-button--bottom" type="button" data-open-add-purchase-item="${escapeHtml(request.id)}">＋ إضافة بند جديد</button>
+        </div>
+      `}
     </section>
   `;
 }
@@ -1697,7 +1741,7 @@ function renderDetails(requestId) {
       </article>
 
       <article class="detail-box">
-        <span>رقم الطلب</span>
+        <span>رقم الإضبارة / الطلب</span>
         <strong>${escapeHtml(request.requestNumber || request.id)}</strong>
       </article>
 
@@ -1864,7 +1908,7 @@ function renderQuickDetails(requestId) {
 
       <label>
         <span>الاسم <small class="optional-label">اختياري</small></span>
-        <input name="title" type="text" maxlength="120" value="${escapeHtml(request.title)}" placeholder="يمكن تركه بلا اسم">
+        <input name="title" type="text" value="${escapeHtml(request.title)}" placeholder="يمكن تركه بلا اسم">
       </label>
 
       <label>
@@ -2242,7 +2286,7 @@ function materialItemEditorMarkup() {
 
       <label>
         <span>اسم البند</span>
-        <input data-item-field="name" type="text" maxlength="120" required placeholder="مثال: كابل نحاسي 4×16 مم²">
+        <input data-item-field="name" type="text" required placeholder="مثال: كابل نحاسي 4×16 مم²">
       </label>
 
       <label>
@@ -2268,7 +2312,7 @@ function materialItemEditorMarkup() {
 
         <label>
           <span>سعر آخر إدخال (ل.س)</span>
-          <input data-item-field="lastEntryPrice" type="number" min="0" step="1" placeholder="عبئ هذا أو السعر الفردي">
+          <input data-item-field="lastEntryPrice" type="number" min="0" step="any" inputmode="decimal" placeholder="عبئ هذا أو السعر الفردي">
         </label>
 
         <label>
@@ -2278,12 +2322,12 @@ function materialItemEditorMarkup() {
 
         <label>
           <span>السعر الفردي (ل.س)</span>
-          <input data-item-field="unitPrice" type="number" min="0" step="1" placeholder="عبئ هذا أو سعر آخر إدخال">
+          <input data-item-field="unitPrice" type="number" min="0" step="any" inputmode="decimal" placeholder="عبئ هذا أو سعر آخر إدخال">
         </label>
 
         <label class="is-wide calculated-total-field">
           <span>السعر الإجمالي (ل.س)</span>
-          <input data-item-field="totalPrice" type="number" min="0" step="1" readonly placeholder="يحسب تلقائيًا">
+          <input data-item-field="totalPrice" type="number" min="0" step="any" inputmode="decimal" readonly placeholder="يحسب تلقائيًا">
         </label>
       </div>
 
@@ -2571,9 +2615,9 @@ async function saveRequestDetails(form) {
   const finalPriceValue = normalizeOptionalNumber(formData.get("finalPrice"));
 
   if (!title) throw new Error("النص المختصر مطلوب.");
-  if (!requestNumber) throw new Error("رقم الطلب مطلوب.");
+  if (!requestNumber) throw new Error("رقم الإضبارة / الطلب مطلوب.");
   if (requestNumber !== String(request.requestNumber || "").trim() && !isValidManualRequestNumber(requestNumber)) {
-    throw new Error("رقم الطلب الجديد يجب أن يتكون من 3 أرقام أو أكثر.");
+    throw new Error("رقم الإضبارة / الطلب مطلوب.");
   }
   if (!["operations", "engineering", "technical"].includes(department)) {
     throw new Error("اختر الجهة الطالبة.");
@@ -2706,7 +2750,7 @@ async function addRequest(formData) {
   const client = getSupabase();
   const requestNumber = String(formData.get("requestNumber") || "").trim();
   if (!isValidManualRequestNumber(requestNumber)) {
-    throw new Error("رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر.");
+    throw new Error("رقم الإضبارة / الطلب مطلوب.");
   }
 
   const status = formData.get("status");
@@ -2875,6 +2919,8 @@ function installLongPressReorder() {
   }
 
   elements.requestList.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button, a, input, select, textarea, label")) return;
+
     const card = event.target.closest(".request-card");
 
     if (!card) return;
@@ -2993,7 +3039,22 @@ elements.searchInput.addEventListener("input", (event) => {
   render();
 });
 
-elements.requestList.addEventListener("click", (event) => {
+elements.requestList.addEventListener("click", async (event) => {
+  const moveTopButton = event.target.closest("[data-move-request-top]");
+  if (moveTopButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    moveTopButton.disabled = true;
+    try {
+      await moveRequestToTop(moveTopButton.dataset.moveRequestTop);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر نقل الطلب إلى أعلى الأولوية");
+    } finally {
+      moveTopButton.disabled = false;
+    }
+    return;
+  }
+
   if (Date.now() < state.suppressTapUntil) return;
 
   const card = event.target.closest(".request-card");
@@ -3028,6 +3089,7 @@ elements.requestList.addEventListener("click", (event) => {
 });
 
 elements.requestList.addEventListener("dblclick", (event) => {
+  if (event.target.closest("button")) return;
   const card = event.target.closest(".request-card");
 
   if (card) {
@@ -3036,6 +3098,7 @@ elements.requestList.addEventListener("dblclick", (event) => {
 });
 
 elements.requestList.addEventListener("keydown", (event) => {
+  if (event.target.closest("button")) return;
   const card = event.target.closest(".request-card");
 
   if (!card) return;
@@ -3187,7 +3250,9 @@ elements.detailsContent.addEventListener("click", async (event) => {
     state.addingItemRequestId = addItemButton.dataset.openAddPurchaseItem;
     renderDetails(state.addingItemRequestId);
     window.setTimeout(() => {
-      elements.detailsContent.querySelector('[data-add-purchase-item-form] [name="name"]')?.focus();
+      const addForm = elements.detailsContent.querySelector('[data-add-purchase-item-form]');
+      addForm?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      addForm?.querySelector('[name="name"]')?.focus();
     }, 50);
     return;
   }
@@ -3720,9 +3785,9 @@ elements.addRequestButton.addEventListener("click", openAddForm);
 elements.addMaterialItemButton.addEventListener("click", () => {
   addMaterialItemEditor();
 
-  elements.materialItemsEditor.lastElementChild
-    ?.querySelector('[data-item-field="name"]')
-    ?.focus();
+  const lastEditor = elements.materialItemsEditor.lastElementChild;
+  lastEditor?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  lastEditor?.querySelector('[data-item-field="name"]')?.focus();
 });
 
 elements.addRequestForm.elements.type.addEventListener("change", syncRequestTypeFields);

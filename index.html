@@ -8,7 +8,7 @@
 
   <title>نظام إدارة المشتريات</title>
 
-  <link rel="stylesheet" href="css/style.css?v=9.1.0-20260809">
+  <link rel="stylesheet" href="css/style.css?v=9.2.0-20260809">
 </head>
 
 <body>
@@ -113,7 +113,7 @@
           <p id="resultsText">يعرض جميع الطلبات</p>
         </div>
 
-        <span class="reorder-hint">اضغط مطولًا ثم حرّك للترتيب</span>
+        <span class="reorder-hint">↑ للأعلى فورًا، أو اضغط مطولًا ثم حرّك للترتيب</span>
       </div>
 
       <section id="requestList" class="request-list" aria-live="polite"></section>
@@ -334,9 +334,9 @@
 
       <form id="addRequestForm" class="request-form">
         <label>
-          <span>رقم الطلب</span>
-          <input name="requestNumber" type="text" inputmode="numeric" autocomplete="off" minlength="3" pattern="[0-9]{3,}" required placeholder="مثال: 123 أو 1234 أو أكثر">
-          <small>أدخل رقم الطلب يدويًا من 3 أرقام أو أكثر. يجب أن يكون غير مستخدم مسبقًا.</small>
+          <span>رقم الإضبارة / الطلب</span>
+          <input name="requestNumber" type="text" autocomplete="off" required placeholder="مثال: 171-172 أو 171/172 أو أي صيغة نصية">
+          <small>حقل نصي حر: يمكنك إدخال أرقام، شرطات، أحرف أو أي صيغة تحتاجها. يجب ألا يكون مستخدمًا مسبقًا.</small>
         </label>
 
         <label>
@@ -367,10 +367,13 @@
               <strong>بنود طلب الشراء</strong>
               <small>أضف المواصفات والكمية، وأدخل سعر آخر إدخال أو السعر الفردي؛ الإجمالي يحسب تلقائيًا.</small>
             </div>
-            <button id="addMaterialItemButton" class="add-item-button" type="button">＋ بند</button>
           </header>
 
           <div id="materialItemsEditor" class="material-items-editor"></div>
+
+          <div class="materials-items-form__footer">
+            <button id="addMaterialItemButton" class="add-item-button add-item-button--bottom" type="button">＋ إضافة بند جديد</button>
+          </div>
         </section>
 
         <label id="workDescriptionField" hidden>
@@ -394,7 +397,7 @@
 
           <label>
             <span>السعر النهائي (ل.س)</span>
-            <input name="finalPrice" type="number" min="0" step="1" placeholder="يحسب تلقائيًا من مجموع البنود" readonly>
+            <input name="finalPrice" type="number" min="0" step="any" inputmode="decimal" placeholder="يحسب تلقائيًا من مجموع البنود" readonly>
           </label>
         </div>
 
@@ -443,7 +446,7 @@
 
         <label>
           <span>الاسم <small class="optional-label">اختياري</small></span>
-          <input name="title" type="text" maxlength="120" placeholder="مثال: معاملة شراء أجهزة مكتبية">
+          <input name="title" type="text" placeholder="مثال: معاملة شراء أجهزة مكتبية">
         </label>
 
         <label>
@@ -489,7 +492,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=9.1.0-20260809"></script>
-  <script src="js/app.js?v=9.1.0-20260809"></script>
+  <script src="js/supabase-config.js?v=9.2.0-20260809"></script>
+  <script src="js/app.js?v=9.2.0-20260809"></script>
 </body>
 </html>
