@@ -100,6 +100,7 @@ const elements = {
   materialItemsEditor: document.getElementById("materialItemsEditor"),
   addMaterialItemButton: document.getElementById("addMaterialItemButton"),
   workDescriptionField: document.getElementById("workDescriptionField"),
+  requestAttachmentsField: document.getElementById("requestAttachmentsField"),
   attachmentsInput: document.getElementById("attachmentsInput"),
   attachmentsPreviewText: document.getElementById("attachmentsPreviewText"),
   toast: document.getElementById("toast")
@@ -129,7 +130,10 @@ function normalizePurchaseItem(item, requestId, index) {
     specifications: String(item?.specifications || item?.specs || ""),
     origin: String(item?.origin || ""),
     quantity: normalizeOptionalNumber(item?.quantity),
-    price: normalizeOptionalNumber(item?.price),
+    lastEntryPrice: normalizeOptionalNumber(item?.lastEntryPrice ?? item?.last_entry_price),
+    unitPrice: normalizeOptionalNumber(item?.unitPrice ?? item?.unit_price),
+    totalPrice: normalizeOptionalNumber(item?.totalPrice ?? item?.total_price ?? item?.price),
+    price: normalizeOptionalNumber(item?.totalPrice ?? item?.total_price ?? item?.price),
     available: item?.available !== false,
     action: String(item?.action || ""),
     signal
@@ -153,7 +157,10 @@ function dbItemToApp(item) {
     origin: String(item.origin || ""),
     quantity: normalizeOptionalNumber(item.quantity),
     unit: String(item.unit || ""),
-    price: normalizeOptionalNumber(item.price),
+    lastEntryPrice: normalizeOptionalNumber(item.last_entry_price),
+    unitPrice: normalizeOptionalNumber(item.unit_price),
+    totalPrice: normalizeOptionalNumber(item.total_price ?? item.price),
+    price: normalizeOptionalNumber(item.total_price ?? item.price),
     available: item.available !== false,
     action: String(item.action_if_unavailable || ""),
     signal: ["none", "green", "red"].includes(item.signal) ? item.signal : "none",
@@ -180,6 +187,7 @@ function dbAttachmentToApp(attachment) {
     mimeType: attachment.mime_type || "",
     sizeBytes: Number(attachment.size_bytes || 0),
     kind: attachment.kind || "other",
+    itemId: attachment.purchase_item_id || null,
     createdAt: attachment.created_at,
     url: ""
   };
@@ -193,7 +201,8 @@ function dbRequestToApp(row) {
     type: row.request_type,
     department: row.department_code,
     description: row.description || "",
-    initialPrice: normalizeOptionalNumber(row.initial_price),
+    finalPrice: normalizeOptionalNumber(row.final_price ?? row.initial_price),
+    initialPrice: normalizeOptionalNumber(row.final_price ?? row.initial_price),
     currency: row.currency || "SYP",
     createdAt: row.request_date || row.created_at,
     created: Boolean(row.is_uploaded),
@@ -359,18 +368,18 @@ async function fetchRequests() {
     .from("requests")
     .select(`
       id, request_number, title, request_type, department_code, description,
-      initial_price, currency, request_date, is_uploaded, has_quotes,
+      initial_price, final_price, currency, request_date, is_uploaded, has_quotes,
       is_purchased, is_settled, offers_count, supplier, sort_order,
       created_at, updated_at,
       purchase_items (
         id, item_name, specifications, origin, quantity, unit, price,
-        available, action_if_unavailable, signal, sort_order, created_at
+        last_entry_price, unit_price, total_price, available, action_if_unavailable, signal, sort_order, created_at
       ),
       notes (
         id, body, author_id, author_name, created_at, updated_at
       ),
       attachments (
-        id, storage_path, original_name, mime_type, size_bytes, kind, created_at
+        id, purchase_item_id, storage_path, original_name, mime_type, size_bytes, kind, created_at
       )
     `)
     .order("sort_order", { ascending: true })
@@ -566,16 +575,16 @@ function getRequestGreenCount(request) {
   return (request.items || []).filter((item) => item.signal === "green").length;
 }
 
-function formatInitialPrice(request) {
-  if (
-    request.initialPrice === null ||
-    request.initialPrice === "" ||
-    Number.isNaN(Number(request.initialPrice))
-  ) {
+function formatFinalPrice(request) {
+  const value = request.finalPrice ?? request.initialPrice;
+  if (value === null || value === "" || Number.isNaN(Number(value))) {
     return "غير محدد";
   }
+  return `${Number(value).toLocaleString("ar-SY")} ل.س`;
+}
 
-  return `${Number(request.initialPrice).toLocaleString("ar-SY")} ل.س`;
+function formatInitialPrice(request) {
+  return formatFinalPrice(request);
 }
 
 function formatDate(dateValue, includeTime = false) {
@@ -658,7 +667,9 @@ function getFilteredRequests() {
           item.specifications,
           item.origin,
           item.quantity,
-          item.price,
+          item.lastEntryPrice,
+          item.unitPrice,
+          item.totalPrice,
           item.action
         ].join(" ")
       )
@@ -763,7 +774,7 @@ function requestCardMarkup(request) {
       </div>
 
       <div class="card-price">
-        <span>السعر الأولي</span>
+        <span>السعر النهائي</span>
         <strong class="${priceClass}">${escapeHtml(priceValue)}</strong>
       </div>
 
@@ -1058,97 +1069,80 @@ function purchaseItemSignalDot(item) {
 
 function purchaseItemMarkup(request, item, index) {
   const isMissing = item.available === false;
+  const compactPriceLabel = item.lastEntryPrice !== null && item.lastEntryPrice !== undefined ? "آخر إدخال" : "السعر الفردي";
+  const compactPriceValue = item.lastEntryPrice ?? item.unitPrice;
+  const itemAttachments = (request.attachments || []).filter(
+    (attachment) => attachment.itemId === item.id
+  );
+  const itemImagesMarkup = itemAttachments.length
+    ? `<div class="purchase-item__images">${itemAttachments.map((attachment) => `
+        <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+          <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
+          <p>${escapeHtml(attachment.name)}</p>
+        </a>`).join("")}</div>`
+    : '<p class="purchase-item__no-images">لا توجد صور لهذا البند.</p>';
 
   return `
     <article class="purchase-item ${isMissing ? "is-missing" : ""}" data-purchase-item="${escapeHtml(item.id)}">
-      <header class="purchase-item__header">
-        <div>
-          <span class="purchase-item__number">البند ${(index + 1).toLocaleString("ar-SY")}</span>
-          <h3>
-            ${purchaseItemSignalDot(item)}
-            ${escapeHtml(item.name || `البند ${index + 1}`)}
-          </h3>
+      <div class="purchase-item__compact" title="انقر مرتين لفتح التفاصيل">
+        <div class="purchase-item__title-row">
+          <h3>${purchaseItemSignalDot(item)}${escapeHtml(item.name || `البند ${index + 1}`)}</h3>
+          <span class="availability-badge ${isMissing ? "is-missing" : "is-available"}">${isMissing ? "غير موجود" : "موجود"}</span>
         </div>
-        <span class="availability-badge ${isMissing ? "is-missing" : "is-available"}">
-          ${isMissing ? "غير موجود" : "موجود"}
-        </span>
-      </header>
-
-      <div class="purchase-item__specs">
-        <span>المواصفات</span>
-        <p>${escapeHtml(item.specifications || "غير محددة")}</p>
-      </div>
-
-      <div class="purchase-item__grid">
-        <div>
-          <span>المنشأ</span>
-          <strong>${escapeHtml(item.origin || "غير محدد")}</strong>
-        </div>
-        <div>
-          <span>العدد / الكمية</span>
-          <strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong>
-        </div>
-        <div>
-          <span>السعر</span>
-          <strong>${escapeHtml(formatItemPrice(item.price))}</strong>
-        </div>
-      </div>
-
-      <div class="purchase-item__controls">
-        <label class="item-availability-control">
-          <input
-            type="checkbox"
-            data-item-available="${escapeHtml(request.id)}"
-            data-item-id="${escapeHtml(item.id)}"
-            ${item.available ? "checked" : ""}
-          >
-          <span>${item.available ? "البند موجود" : "البند غير موجود"}</span>
-        </label>
-
-        <div class="item-signal-picker" aria-label="إشارة البند">
-          <span>إشارة البند</span>
-          <div>
-            <button
-              class="signal-choice ${item.signal === "none" ? "is-selected" : ""}"
-              type="button"
-              data-item-signal="none"
-              data-request-id="${escapeHtml(request.id)}"
-              data-item-id="${escapeHtml(item.id)}"
-            >بدون</button>
-            <button
-              class="signal-choice is-green ${item.signal === "green" ? "is-selected" : ""}"
-              type="button"
-              data-item-signal="green"
-              data-request-id="${escapeHtml(request.id)}"
-              data-item-id="${escapeHtml(item.id)}"
-            ><span class="signal-dot is-green"></span> خضراء</button>
-            <button
-              class="signal-choice is-red ${item.signal === "red" ? "is-selected" : ""}"
-              type="button"
-              data-item-signal="red"
-              data-request-id="${escapeHtml(request.id)}"
-              data-item-id="${escapeHtml(item.id)}"
-            ><span class="signal-dot is-red"></span> حمراء</button>
+        <div class="purchase-item__summary-row">
+          <div class="purchase-item__summary-meta">
+            <span>${escapeHtml(compactPriceLabel)}: <strong>${escapeHtml(formatItemPrice(compactPriceValue))}</strong></span>
+            <span>الكمية: <strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong></span>
+          </div>
+          <div class="purchase-item__summary-total">
+            <span>السعر الإجمالي</span>
+            <strong>${escapeHtml(formatItemPrice(item.totalPrice))}</strong>
           </div>
         </div>
+        <small class="purchase-item__expand-hint">نقرتان لعرض باقي التفاصيل</small>
       </div>
 
-      ${
-        isMissing
-          ? `
-            <label class="item-action-field">
-              <span>الإجراء المتبع لهذا البند</span>
-              <textarea
-                rows="3"
-                maxlength="700"
-                data-item-action="${escapeHtml(request.id)}"
-                data-item-id="${escapeHtml(item.id)}"
-                placeholder="اكتب الإجراء المتبع بسبب عدم توفر البند..."
-              >${escapeHtml(item.action || "")}</textarea>
-            </label>
-          `
-          : ""
-      }
+      <div class="purchase-item__expanded" hidden>
+        <div class="purchase-item__specs">
+          <span>المواصفات</span>
+          <p>${escapeHtml(item.specifications || "غير محددة")}</p>
+        </div>
+
+        <div class="purchase-item__grid">
+          <div><span>المنشأ</span><strong>${escapeHtml(item.origin || "غير محدد")}</strong></div>
+          <div><span>العدد / الكمية</span><strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong></div>
+          <div><span>سعر آخر إدخال</span><strong>${escapeHtml(formatItemPrice(item.lastEntryPrice))}</strong></div>
+          <div><span>السعر الفردي</span><strong>${escapeHtml(formatItemPrice(item.unitPrice))}</strong></div>
+          <div class="is-total"><span>السعر الإجمالي</span><strong>${escapeHtml(formatItemPrice(item.totalPrice))}</strong></div>
+        </div>
+
+        <div class="purchase-item__controls">
+          <label class="item-availability-control">
+            <input type="checkbox" data-item-available="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" ${item.available ? "checked" : ""}>
+            <span>${item.available ? "البند موجود" : "البند غير موجود"}</span>
+          </label>
+          <div class="item-signal-picker" aria-label="إشارة البند">
+            <span>إشارة البند</span>
+            <div>
+              <button class="signal-choice ${item.signal === "none" ? "is-selected" : ""}" type="button" data-item-signal="none" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">بدون</button>
+              <button class="signal-choice is-green ${item.signal === "green" ? "is-selected" : ""}" type="button" data-item-signal="green" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-green"></span> خضراء</button>
+              <button class="signal-choice is-red ${item.signal === "red" ? "is-selected" : ""}" type="button" data-item-signal="red" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-red"></span> حمراء</button>
+            </div>
+          </div>
+        </div>
+
+        ${isMissing ? `<label class="item-action-field"><span>الإجراء المتبع لهذا البند</span><textarea rows="3" maxlength="700" data-item-action="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" placeholder="اكتب الإجراء المتبع بسبب عدم توفر البند...">${escapeHtml(item.action || "")}</textarea></label>` : ""}
+
+        <div class="purchase-item__images-section">
+          <span>صور البند (${itemAttachments.length.toLocaleString("ar-SY")})</span>
+          ${itemImagesMarkup}
+          <label class="purchase-item__add-images">
+            <span>إضافة صور أخرى</span>
+            <input type="file" accept="image/*" multiple data-add-item-images-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
+            <small>يمكن اختيار عدة صور دفعة واحدة.</small>
+          </label>
+        </div>
+      </div>
     </article>
   `;
 }
@@ -1188,9 +1182,10 @@ function renderDetails(requestId) {
 
   elements.detailsTitle.textContent = request.title;
 
+  const requestLevelAttachments = (request.attachments || []).filter((attachment) => !attachment.itemId);
   const attachmentsMarkup =
-    request.attachments && request.attachments.length > 0
-      ? request.attachments
+    requestLevelAttachments.length > 0
+      ? requestLevelAttachments
           .map((attachment) => {
             const isImage = String(attachment.mimeType || "").startsWith("image/");
             if (isImage) {
@@ -1247,7 +1242,7 @@ function renderDetails(requestId) {
       </article>
 
       <article class="detail-box">
-        <span>السعر الأولي</span>
+        <span>السعر النهائي</span>
         <strong>${escapeHtml(formatInitialPrice(request))}</strong>
       </article>
 
@@ -1296,19 +1291,21 @@ function renderDetails(requestId) {
     ${notesMarkup(request)}
 
     ${
-      request.attachments && request.attachments.length > 0
+      requestLevelAttachments.length > 0
         ? `
-          <h3 class="attachments-title">الصور المرفقة</h3>
+          <h3 class="attachments-title">مرفقات الطلب</h3>
           <div class="attachments">${attachmentsMarkup}</div>
         `
-        : `
-          <div class="detail-grid attachments-empty-grid">
-            <article class="detail-box is-wide">
-              <span>الصور المرفقة</span>
-              <p>لا توجد صور مرفقة لهذا الطلب.</p>
-            </article>
-          </div>
-        `
+        : request.type === "work-order"
+          ? `
+            <div class="detail-grid attachments-empty-grid">
+              <article class="detail-box is-wide">
+                <span>مرفقات الطلب</span>
+                <p>لا توجد صور أو ملفات مرفقة لهذا الطلب.</p>
+              </article>
+            </div>
+          `
+          : ""
     }
   `;
 }
@@ -1442,6 +1439,43 @@ async function uploadSelectedAttachments(requestId) {
   }
 }
 
+
+async function uploadItemAttachments(requestId, itemId, attachments) {
+  const client = getSupabase();
+  for (const attachment of attachments) {
+    const storagePath = `${requestId}/${itemId}/${safeStorageFileName(attachment.file.name)}`;
+    const { error: uploadError } = await client.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, attachment.file, { contentType: attachment.mimeType, upsert: false });
+    if (uploadError) throw uploadError;
+
+    const { error: metadataError } = await client.from("attachments").insert({
+      request_id: requestId,
+      purchase_item_id: itemId,
+      storage_path: storagePath,
+      original_name: attachment.originalName,
+      mime_type: attachment.mimeType,
+      size_bytes: attachment.file.size,
+      kind: "image"
+    });
+    if (metadataError) throw metadataError;
+  }
+}
+
+async function prepareMaterialItemImages() {
+  const editors = [...elements.materialItemsEditor.querySelectorAll("[data-material-item-editor]")];
+  const prepared = [];
+  for (const [index, editor] of editors.entries()) {
+    const input = editor.querySelector("[data-item-images]");
+    const files = [...(input?.files || [])];
+    if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+      throw new Error(`صور البند ${(index + 1).toLocaleString("ar-SY")} يجب أن تكون ملفات صور فقط.`);
+    }
+    prepared.push(await prepareSelectedAttachments(files));
+  }
+  return prepared;
+}
+
 function materialItemEditorMarkup() {
   state.materialItemSequence += 1;
   const editorId = `material-editor-${state.materialItemSequence}`;
@@ -1474,11 +1508,27 @@ function materialItemEditorMarkup() {
           <input data-item-field="quantity" type="number" min="0" step="any" required placeholder="0">
         </label>
 
-        <label class="is-wide">
-          <span>السعر (ل.س)</span>
-          <input data-item-field="price" type="number" min="0" step="1" placeholder="اختياري">
+        <label>
+          <span>سعر آخر إدخال (ل.س)</span>
+          <input data-item-field="lastEntryPrice" type="number" min="0" step="1" placeholder="عبئ هذا أو السعر الفردي">
+        </label>
+
+        <label>
+          <span>السعر الفردي (ل.س)</span>
+          <input data-item-field="unitPrice" type="number" min="0" step="1" placeholder="عبئ هذا أو سعر آخر إدخال">
+        </label>
+
+        <label class="is-wide calculated-total-field">
+          <span>السعر الإجمالي (ل.س)</span>
+          <input data-item-field="totalPrice" type="number" min="0" step="1" readonly placeholder="يحسب تلقائيًا">
         </label>
       </div>
+
+      <label class="item-images-field">
+        <span>صور البند</span>
+        <input data-item-images type="file" accept="image/*" multiple>
+        <small data-item-images-preview>يمكن رفع حتى ${MAX_ATTACHMENTS} صور لهذا البند.</small>
+      </label>
 
       <label class="check-row material-item-available">
         <input data-editor-available type="checkbox" checked>
@@ -1539,9 +1589,46 @@ function syncRequestTypeFields() {
   description.disabled = isMaterials;
   description.required = !isMaterials;
 
+  const finalPrice = elements.addRequestForm.elements.finalPrice;
+  if (finalPrice) {
+    finalPrice.readOnly = isMaterials;
+    finalPrice.placeholder = isMaterials ? "يحسب تلقائيًا من مجموع البنود" : "اختياري";
+  }
+  if (elements.requestAttachmentsField) elements.requestAttachmentsField.hidden = isMaterials;
+
   if (isMaterials && elements.materialItemsEditor.children.length === 0) {
     addMaterialItemEditor();
   }
+  if (isMaterials) recalculateFinalPrice();
+}
+
+function calculateItemTotal(quantity, lastEntryPrice, unitPrice) {
+  const qty = normalizeOptionalNumber(quantity);
+  const last = normalizeOptionalNumber(lastEntryPrice);
+  const unit = normalizeOptionalNumber(unitPrice);
+  const sourcePrice = unit ?? last;
+  if (qty === null || sourcePrice === null) return null;
+  return qty * sourcePrice;
+}
+
+function recalculateMaterialEditor(editor) {
+  if (!editor) return;
+  const quantity = editor.querySelector('[data-item-field="quantity"]')?.value;
+  const last = editor.querySelector('[data-item-field="lastEntryPrice"]')?.value;
+  const unit = editor.querySelector('[data-item-field="unitPrice"]')?.value;
+  const total = calculateItemTotal(quantity, last, unit);
+  const totalInput = editor.querySelector('[data-item-field="totalPrice"]');
+  if (totalInput) totalInput.value = total === null ? "" : String(total);
+  recalculateFinalPrice();
+}
+
+function recalculateFinalPrice() {
+  const finalInput = elements.addRequestForm.elements.finalPrice;
+  if (!finalInput || elements.addRequestForm.elements.type.value !== "materials") return;
+  const totals = [...elements.materialItemsEditor.querySelectorAll('[data-item-field="totalPrice"]')]
+    .map((input) => normalizeOptionalNumber(input.value))
+    .filter((value) => value !== null);
+  finalInput.value = totals.length ? String(totals.reduce((sum, value) => sum + value, 0)) : "";
 }
 
 function collectMaterialItemsFromForm(requestId) {
@@ -1569,6 +1656,12 @@ function collectMaterialItemsFromForm(requestId) {
       );
     }
 
+    const lastEntryPrice = getField("lastEntryPrice").value;
+    const unitPrice = getField("unitPrice").value;
+    if (lastEntryPrice === "" && unitPrice === "") {
+      throw new Error(`أدخل سعر آخر إدخال أو السعر الفردي للبند ${(index + 1).toLocaleString("ar-SY")}`);
+    }
+
     return normalizePurchaseItem(
       {
         id: `ITEM-${requestId}-${index + 1}-${Date.now()}`,
@@ -1576,7 +1669,10 @@ function collectMaterialItemsFromForm(requestId) {
         specifications: getField("specifications").value.trim(),
         origin: getField("origin").value.trim(),
         quantity: getField("quantity").value,
-        price: getField("price").value,
+        lastEntryPrice,
+        unitPrice,
+        totalPrice: getField("totalPrice").value,
+        price: getField("totalPrice").value,
         available,
         action,
         signal: getField("signal").value
@@ -1629,9 +1725,10 @@ async function addRequest(formData) {
   const client = getSupabase();
   const status = formData.get("status");
   const isPurchased = status === "purchased";
-  const initialPriceValue = formData.get("initialPrice");
+  const finalPriceValue = formData.get("finalPrice");
   const type = formData.get("type");
   const materialItems = type === "materials" ? collectMaterialItemsFromForm("new") : [];
+  const materialItemImages = type === "materials" ? await prepareMaterialItemImages() : [];
   const currentOrders = state.requests.map((request) => Number(request.sortOrder || 0));
   const sortOrder = currentOrders.length ? Math.min(...currentOrders) - 100 : 0;
 
@@ -1641,7 +1738,10 @@ async function addRequest(formData) {
     origin: item.origin,
     quantity: item.quantity,
     unit: item.unit || "",
-    price: item.price,
+    last_entry_price: item.lastEntryPrice,
+    unit_price: item.unitPrice,
+    total_price: item.totalPrice,
+    price: item.totalPrice,
     available: item.available,
     action_if_unavailable: item.action,
     signal: item.signal,
@@ -1655,7 +1755,7 @@ async function addRequest(formData) {
       p_request_type: type,
       p_department_code: formData.get("department"),
       p_description: type === "work-order" ? String(formData.get("description") || "").trim() : "",
-      p_initial_price: initialPriceValue !== "" ? Number(initialPriceValue) : null,
+      p_initial_price: finalPriceValue !== "" ? Number(finalPriceValue) : null,
       p_has_quotes: status === "quotes" || isPurchased,
       p_is_purchased: isPurchased,
       p_is_settled: formData.get("settled") === "on",
@@ -1668,7 +1768,27 @@ async function addRequest(formData) {
   if (requestError) throw requestError;
 
   let attachmentWarning = "";
-  if (state.selectedAttachments.length) {
+  if (type === "materials" && materialItemImages.some((files) => files.length)) {
+    try {
+      const { data: createdItems, error: itemsError } = await client
+        .from("purchase_items")
+        .select("id, sort_order")
+        .eq("request_id", requestId)
+        .order("sort_order", { ascending: true });
+      if (itemsError) throw itemsError;
+      for (let index = 0; index < materialItemImages.length; index += 1) {
+        const itemId = createdItems?.[index]?.id;
+        if (itemId && materialItemImages[index].length) {
+          await uploadItemAttachments(requestId, itemId, materialItemImages[index]);
+        }
+      }
+    } catch (error) {
+      console.error("تعذر رفع بعض صور البنود", error);
+      attachmentWarning = "تم حفظ الطلب، لكن تعذر رفع بعض صور البنود.";
+    }
+  }
+
+  if (state.selectedAttachments.length && type !== "materials") {
     try {
       await uploadSelectedAttachments(requestId);
     } catch (error) {
@@ -2066,6 +2186,28 @@ elements.detailsContent.addEventListener("click", async (event) => {
 });
 
 elements.detailsContent.addEventListener("change", async (event) => {
+  const itemImagesInput = event.target.closest("[data-add-item-images-request]");
+  if (itemImagesInput) {
+    const requestId = itemImagesInput.dataset.addItemImagesRequest;
+    const itemId = itemImagesInput.dataset.itemId;
+    const files = [...itemImagesInput.files];
+    if (!files.length) return;
+    try {
+      if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+        throw new Error("اختر ملفات صور فقط لهذا البند.");
+      }
+      showToast("جارٍ تجهيز صور البند...");
+      const prepared = await prepareSelectedAttachments(files);
+      await uploadItemAttachments(requestId, itemId, prepared);
+      await refreshAppData({ silent: true });
+      renderDetails(requestId);
+      showToast(`تم رفع ${prepared.length} صورة للبند`);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر رفع صور البند");
+    }
+    return;
+  }
+
   const availabilityInput = event.target.closest("[data-item-available]");
   if (availabilityInput) {
     const { request, item } = getRequestItem(
@@ -2192,10 +2334,24 @@ elements.detailsContent.addEventListener("submit", async (event) => {
   }
 });
 
+elements.detailsContent.addEventListener("dblclick", (event) => {
+  const itemCard = event.target.closest("[data-purchase-item]");
+  if (!itemCard || event.target.closest("button, a, input, select, textarea")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const expanded = itemCard.querySelector(".purchase-item__expanded");
+  if (!expanded) return;
+  const willOpen = expanded.hidden;
+  expanded.hidden = !willOpen;
+  itemCard.classList.toggle("is-expanded", willOpen);
+  const hint = itemCard.querySelector(".purchase-item__expand-hint");
+  if (hint) hint.textContent = willOpen ? "نقرتان لإغلاق التفاصيل" : "نقرتان لعرض باقي التفاصيل";
+});
+
 elements.detailsSheet.addEventListener("click", (event) => {
   if (
     event.target.closest(
-      "button, a, input, select, textarea, form, .notes-section"
+      "button, a, input, select, textarea, form, .notes-section, .purchase-item"
     )
   ) {
     return;
@@ -2215,7 +2371,7 @@ elements.detailsSheet.addEventListener("click", (event) => {
 elements.detailsSheet.addEventListener("dblclick", (event) => {
   if (
     !event.target.closest(
-      "button, a, input, select, textarea, form, .notes-section"
+      "button, a, input, select, textarea, form, .notes-section, .purchase-item"
     )
   ) {
     closeDetails();
@@ -2261,19 +2417,40 @@ elements.materialItemsEditor.addEventListener("click", (event) => {
 
   removeButton.closest("[data-material-item-editor]")?.remove();
   renumberMaterialItemEditors();
+  recalculateFinalPrice();
 });
 
 elements.materialItemsEditor.addEventListener("change", (event) => {
+  const editor = event.target.closest("[data-material-item-editor]");
   const availability = event.target.closest("[data-editor-available]");
-  if (!availability) return;
+  if (availability) {
+    const actionWrap = editor?.querySelector("[data-editor-action-wrap]");
+    const labelText = availability.closest("label")?.querySelector("span");
+    if (actionWrap) actionWrap.hidden = availability.checked;
+    if (labelText) labelText.textContent = availability.checked ? "البند موجود" : "البند غير موجود";
+  }
 
-  const editor = availability.closest("[data-material-item-editor]");
-  const actionWrap = editor?.querySelector("[data-editor-action-wrap]");
-  const labelText = availability.closest("label")?.querySelector("span");
+  const imagesInput = event.target.closest("[data-item-images]");
+  if (imagesInput) {
+    const preview = editor?.querySelector("[data-item-images-preview]");
+    const count = Math.min(imagesInput.files.length, MAX_ATTACHMENTS);
+    if (preview) preview.textContent = count ? `تم اختيار ${count} صورة لهذا البند.` : `يمكن رفع حتى ${MAX_ATTACHMENTS} صور لهذا البند.`;
+    if (imagesInput.files.length > MAX_ATTACHMENTS) showToast(`سيتم اعتماد أول ${MAX_ATTACHMENTS} صور فقط لهذا البند`);
+  }
+});
 
-  if (actionWrap) actionWrap.hidden = availability.checked;
-  if (labelText) {
-    labelText.textContent = availability.checked ? "البند موجود" : "البند غير موجود";
+elements.materialItemsEditor.addEventListener("input", (event) => {
+  const editor = event.target.closest("[data-material-item-editor]");
+  if (!editor) return;
+  if (event.target.matches('[data-item-field="lastEntryPrice"]') && event.target.value !== "") {
+    const other = editor.querySelector('[data-item-field="unitPrice"]');
+    if (other) other.value = "";
+  } else if (event.target.matches('[data-item-field="unitPrice"]') && event.target.value !== "") {
+    const other = editor.querySelector('[data-item-field="lastEntryPrice"]');
+    if (other) other.value = "";
+  }
+  if (event.target.matches('[data-item-field="quantity"], [data-item-field="lastEntryPrice"], [data-item-field="unitPrice"]')) {
+    recalculateMaterialEditor(editor);
   }
 });
 

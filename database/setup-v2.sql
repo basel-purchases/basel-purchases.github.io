@@ -62,6 +62,7 @@ create table if not exists public.requests (
   description text not null default '',
 
   initial_price numeric(18,2),
+  final_price numeric(18,2),
   currency text not null default 'SYP' check (currency = 'SYP'),
   request_date date not null default current_date,
 
@@ -110,6 +111,9 @@ create table if not exists public.purchase_items (
   quantity numeric(18,3),
   unit text not null default '',
   price numeric(18,2),
+  last_entry_price numeric(18,2),
+  unit_price numeric(18,2),
+  total_price numeric(18,2),
   available boolean not null default true,
   action_if_unavailable text not null default '',
   signal text not null default 'none' check (signal in ('none', 'green', 'red')),
@@ -120,6 +124,10 @@ create table if not exists public.purchase_items (
   updated_at timestamptz not null default now(),
   constraint purchase_item_nonnegative_quantity check (quantity is null or quantity >= 0),
   constraint purchase_item_nonnegative_price check (price is null or price >= 0),
+  constraint purchase_item_nonnegative_last_entry_price check (last_entry_price is null or last_entry_price >= 0),
+  constraint purchase_item_nonnegative_unit_price check (unit_price is null or unit_price >= 0),
+  constraint purchase_item_nonnegative_total_price check (total_price is null or total_price >= 0),
+  constraint purchase_item_single_source_price check (last_entry_price is null or unit_price is null),
   constraint unavailable_action_required check (
     available = true or nullif(btrim(action_if_unavailable), '') is not null
   )
@@ -155,6 +163,7 @@ create index if not exists notes_request_idx
 create table if not exists public.attachments (
   id uuid primary key default gen_random_uuid(),
   request_id uuid not null references public.requests(id) on delete cascade,
+  purchase_item_id uuid references public.purchase_items(id) on delete cascade,
   storage_path text not null unique,
   original_name text not null,
   mime_type text,
@@ -166,6 +175,8 @@ create table if not exists public.attachments (
 
 create index if not exists attachments_request_idx
   on public.attachments (request_id, created_at);
+create index if not exists attachments_purchase_item_idx
+  on public.attachments (purchase_item_id, created_at);
 
 -- =========================================================
 -- 7) Deletion audit log
@@ -621,6 +632,7 @@ begin
     department_code,
     description,
     initial_price,
+    final_price,
     currency,
     request_date,
     is_uploaded,
@@ -636,6 +648,7 @@ begin
     p_request_type,
     p_department_code,
     case when p_request_type = 'work-order' then coalesce(p_description, '') else '' end,
+    p_initial_price,
     p_initial_price,
     'SYP',
     current_date,
@@ -663,6 +676,9 @@ begin
         quantity numeric,
         unit text,
         price numeric,
+        last_entry_price numeric,
+        unit_price numeric,
+        total_price numeric,
         available boolean,
         action_if_unavailable text,
         signal text,
@@ -677,6 +693,9 @@ begin
         quantity,
         unit,
         price,
+        last_entry_price,
+        unit_price,
+        total_price,
         available,
         action_if_unavailable,
         signal,
@@ -688,7 +707,14 @@ begin
         coalesce(v_item.origin, ''),
         v_item.quantity,
         coalesce(v_item.unit, ''),
-        v_item.price,
+        case when v_item.quantity is not null and coalesce(v_item.unit_price, v_item.last_entry_price) is not null
+          then v_item.quantity * coalesce(v_item.unit_price, v_item.last_entry_price)
+          else coalesce(v_item.total_price, v_item.price) end,
+        v_item.last_entry_price,
+        v_item.unit_price,
+        case when v_item.quantity is not null and coalesce(v_item.unit_price, v_item.last_entry_price) is not null
+          then v_item.quantity * coalesce(v_item.unit_price, v_item.last_entry_price)
+          else coalesce(v_item.total_price, v_item.price) end,
         coalesce(v_item.available, true),
         coalesce(v_item.action_if_unavailable, ''),
         coalesce(v_item.signal, 'none'),

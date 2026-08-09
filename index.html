@@ -314,7 +314,7 @@
           <header class="materials-items-form__header">
             <div>
               <strong>بنود طلب الشراء</strong>
-              <small>أضف لكل بند المواصفات والمنشأ والكمية والسعر وحالة توفره.</small>
+              <small>أضف المواصفات والكمية، وأدخل سعر آخر إدخال أو السعر الفردي؛ الإجمالي يحسب تلقائيًا.</small>
             </div>
             <button id="addMaterialItemButton" class="add-item-button" type="button">＋ بند</button>
           </header>
@@ -342,8 +342,8 @@
           </label>
 
           <label>
-            <span>السعر الأولي (ل.س)</span>
-            <input name="initialPrice" type="number" min="0" step="1" placeholder="اختياري">
+            <span>السعر النهائي (ل.س)</span>
+            <input name="finalPrice" type="number" min="0" step="1" placeholder="يحسب تلقائيًا من مجموع البنود" readonly>
           </label>
         </div>
 
@@ -352,8 +352,8 @@
           <span>تمت تصفية هذا الطلب</span>
         </label>
 
-        <label>
-          <span>صور أو ملفات PDF</span>
+        <label id="requestAttachmentsField" hidden>
+          <span>صور أو ملفات PDF لأمر التشغيل</span>
           <input name="attachments" id="attachmentsInput" type="file" accept="image/*,application/pdf" multiple>
           <small id="attachmentsPreviewText">
             ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.
