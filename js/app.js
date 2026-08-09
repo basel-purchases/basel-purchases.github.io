@@ -123,6 +123,10 @@ function normalizeOptionalNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function isValidManualRequestNumber(value) {
+  return /^\d{3,}$/.test(String(value || "").trim());
+}
+
 function normalizePurchaseItem(item, requestId, index) {
   const allowedSignals = new Set(["none", "green", "red"]);
   const signal = allowedSignals.has(item?.signal) ? item.signal : "none";
@@ -296,9 +300,17 @@ function saveRequests() {
 function handleDatabaseError(error, prefix = "تعذر حفظ التغيير") {
   console.error(error);
   const raw = String(error?.message || error?.error_description || "").trim();
+  const isDuplicateRequestNumber = String(error?.code || "") === "23505" &&
+    /request_number|requests_request_number_key/i.test(raw);
   const friendly = raw.includes("JWT")
     ? "انتهت جلسة الدخول. سجّل الدخول من جديد."
-    : raw || prefix;
+    : isDuplicateRequestNumber
+      ? "رقم الطلب مستخدم مسبقًا. اختر رقمًا آخر."
+      : /Request number must contain at least 3 digits/i.test(raw)
+        ? "رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر."
+        : /Request number is required/i.test(raw)
+          ? "رقم الطلب مطلوب."
+          : raw || prefix;
   showToast(`${prefix}: ${friendly}`);
 }
 
@@ -704,6 +716,7 @@ function getFilteredRequests() {
 
     const searchableText = [
       request.title,
+      request.requestNumber,
       request.id,
       request.description,
       itemText,
@@ -1129,6 +1142,12 @@ function requestEditFormMarkup(request) {
 
       <div class="request-details-edit-form__grid">
         <label>
+          <span>رقم الطلب</span>
+          <input name="requestNumber" type="text" inputmode="numeric" autocomplete="off" value="${escapeHtml(request.requestNumber || "")}">
+          <small>عند تغيير الرقم يجب أن يكون 3 أرقام أو أكثر، ويجب ألا يكون مستخدمًا لطلب آخر.</small>
+        </label>
+
+        <label>
           <span>الجهة الطالبة</span>
           <select name="department" required>${requestDepartmentOptions(request.department)}</select>
         </label>
@@ -1306,10 +1325,13 @@ function purchaseItemMarkup(request, item, index) {
   );
   const itemImagesMarkup = itemAttachments.length
     ? `<div class="purchase-item__images">${itemAttachments.map((attachment) => `
-        <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
-          <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
-          <p>${escapeHtml(attachment.name)}</p>
-        </a>`).join("")}</div>`
+        <div class="attachment-card">
+          <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+            <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
+            <p>${escapeHtml(attachment.name)}</p>
+          </a>
+          <button class="attachment-delete-button" type="button" data-delete-attachment="${escapeHtml(attachment.id)}" data-request-id="${escapeHtml(request.id)}">🗑 حذف الصورة</button>
+        </div>`).join("")}</div>`
     : '<p class="purchase-item__no-images">لا توجد صور لهذا البند.</p>';
 
   const readOnlyDetails = `
@@ -1354,6 +1376,7 @@ function purchaseItemMarkup(request, item, index) {
           <h3>${purchaseItemSignalDot(item)}${escapeHtml(item.name || `البند ${index + 1}`)}</h3>
           <span class="availability-badge ${isMissing ? "is-missing" : "is-available"}">${isMissing ? "غير موجود" : "موجود"}</span>
         </div>
+        <p class="purchase-item__compact-specs">${escapeHtml(item.specifications || "لا توجد مواصفات مدخلة")}</p>
         <div class="purchase-item__summary-row">
           <div class="purchase-item__summary-meta">
             <span>${escapeHtml(compactPriceLabel)}: <strong>${escapeHtml(formatItemPrice(compactPriceValue))}</strong></span>
@@ -1434,18 +1457,24 @@ function requestAttachmentsMarkup(request) {
         const isImage = String(attachment.mimeType || "").startsWith("image/");
         if (isImage) {
           return `
-            <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
-              <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
-              <p>${escapeHtml(attachment.name)}</p>
-            </a>
+            <div class="attachment-card">
+              <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+                <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
+                <p>${escapeHtml(attachment.name)}</p>
+              </a>
+              <button class="attachment-delete-button" type="button" data-delete-attachment="${escapeHtml(attachment.id)}" data-request-id="${escapeHtml(request.id)}">🗑 حذف الصورة</button>
+            </div>
           `;
         }
         return `
-          <a class="attachment attachment--document" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
-            <span class="attachment__file-icon" aria-hidden="true">📄</span>
-            <p>${escapeHtml(attachment.name)}</p>
-            <small>فتح الملف</small>
-          </a>
+          <div class="attachment-card">
+            <a class="attachment attachment--document" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+              <span class="attachment__file-icon" aria-hidden="true">📄</span>
+              <p>${escapeHtml(attachment.name)}</p>
+              <small>فتح الملف</small>
+            </a>
+            <button class="attachment-delete-button" type="button" data-delete-attachment="${escapeHtml(attachment.id)}" data-request-id="${escapeHtml(request.id)}">🗑 حذف المرفق</button>
+          </div>
         `;
       }).join("")
     : '<p class="request-attachments-empty">لا توجد صور أو مرفقات على مستوى الطلب حتى الآن.</p>';
@@ -1551,6 +1580,22 @@ function renderDetails(requestId) {
   `;
 }
 
+function scrollDetailsToPurchaseItem(itemId, behavior = "smooth") {
+  if (!itemId || !elements.detailsContent) return;
+
+  const target = [...elements.detailsContent.querySelectorAll("[data-purchase-item]")]
+    .find((element) => element.dataset.purchaseItem === itemId);
+  if (!target) {
+    elements.detailsContent.scrollTo({ top: 0, behavior });
+    return;
+  }
+
+  const containerRect = elements.detailsContent.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const top = elements.detailsContent.scrollTop + targetRect.top - containerRect.top - 10;
+  elements.detailsContent.scrollTo({ top: Math.max(0, top), behavior });
+}
+
 function openDetails(requestId) {
   const request = state.requests.find((item) => item.id === requestId);
 
@@ -1580,7 +1625,7 @@ function openAddForm() {
   openOverlay(elements.addOverlay);
 
   window.setTimeout(() => {
-    elements.addRequestForm.elements.title.focus();
+    elements.addRequestForm.elements.requestNumber?.focus();
   }, 120);
 }
 
@@ -1657,6 +1702,27 @@ function safeStorageFileName(name) {
   const dot = name.lastIndexOf(".");
   const ext = dot >= 0 ? name.slice(dot).toLowerCase().replace(/[^.a-z0-9]/g, "") : "";
   return `${crypto.randomUUID()}${ext || ""}`;
+}
+
+async function deleteAttachment(requestId, attachmentId) {
+  const request = state.requests.find((item) => item.id === requestId);
+  const attachment = request?.attachments?.find((item) => item.id === attachmentId);
+  if (!request || !attachment) throw new Error("تعذر العثور على الصورة أو المرفق.");
+
+  const client = getSupabase();
+  const { error: storageError } = await client.storage
+    .from(STORAGE_BUCKET)
+    .remove([attachment.storagePath]);
+  if (storageError) throw storageError;
+
+  const { error: metadataError } = await client
+    .from("attachments")
+    .delete()
+    .eq("id", attachmentId)
+    .eq("request_id", requestId);
+  if (metadataError) throw metadataError;
+
+  return { storageWarning: false };
 }
 
 async function uploadRequestAttachments(requestId, attachments) {
@@ -2047,6 +2113,7 @@ async function saveRequestDetails(form) {
 
   const formData = new FormData(form);
   const title = String(formData.get("title") || "").trim();
+  const requestNumber = String(formData.get("requestNumber") || "").trim();
   const department = String(formData.get("department") || "");
   const requestDate = String(formData.get("requestDate") || "").trim();
   const status = String(formData.get("status") || "new");
@@ -2059,6 +2126,10 @@ async function saveRequestDetails(form) {
   const finalPriceValue = normalizeOptionalNumber(formData.get("finalPrice"));
 
   if (!title) throw new Error("النص المختصر مطلوب.");
+  if (!requestNumber) throw new Error("رقم الطلب مطلوب.");
+  if (requestNumber !== String(request.requestNumber || "").trim() && !isValidManualRequestNumber(requestNumber)) {
+    throw new Error("رقم الطلب الجديد يجب أن يتكون من 3 أرقام أو أكثر.");
+  }
   if (!["operations", "engineering", "technical"].includes(department)) {
     throw new Error("اختر الجهة الطالبة.");
   }
@@ -2074,6 +2145,7 @@ async function saveRequestDetails(form) {
   const { error } = await getSupabase()
     .from("requests")
     .update({
+      request_number: requestNumber,
       title,
       department_code: department,
       description,
@@ -2140,9 +2212,11 @@ async function savePurchaseItemDetails(form, isNew) {
   }
 
   await syncMaterialRequestFinalPrice(requestId);
+  const savedItemId = itemId;
   state.editingItemId = null;
   state.addingItemRequestId = null;
   await refreshAppData({ silent: true });
+  window.setTimeout(() => scrollDetailsToPurchaseItem(savedItemId), 80);
 
   if (imageWarning) window.alert(imageWarning);
   else showToast(isNew ? "تمت إضافة البند" : "تم حفظ تعديلات البند");
@@ -2182,6 +2256,11 @@ async function deleteRequestWithPassword(requestId) {
 
 async function addRequest(formData) {
   const client = getSupabase();
+  const requestNumber = String(formData.get("requestNumber") || "").trim();
+  if (!isValidManualRequestNumber(requestNumber)) {
+    throw new Error("رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر.");
+  }
+
   const status = formData.get("status");
   const isPurchased = status === "purchased";
   const finalPriceValue = formData.get("finalPrice");
@@ -2211,6 +2290,7 @@ async function addRequest(formData) {
   const { data: requestId, error: requestError } = await client.rpc(
     "create_request_secure",
     {
+      p_request_number: requestNumber,
       p_title: String(formData.get("title") || "").trim(),
       p_request_type: type,
       p_department_code: formData.get("department"),
@@ -2572,6 +2652,32 @@ elements.detailsContent.addEventListener("click", async (event) => {
     renderDetails(state.activeDetailsId);
     return;
   }
+
+  const deleteAttachmentButton = event.target.closest("[data-delete-attachment]");
+  if (deleteAttachmentButton) {
+    const requestId = deleteAttachmentButton.dataset.requestId;
+    const attachmentId = deleteAttachmentButton.dataset.deleteAttachment;
+    const request = state.requests.find((item) => item.id === requestId);
+    const attachment = request?.attachments?.find((item) => item.id === attachmentId);
+    if (!request || !attachment) return;
+
+    const isImage = String(attachment.mimeType || "").startsWith("image/");
+    if (!window.confirm(`هل تريد حذف ${isImage ? "هذه الصورة" : "هذا المرفق"} نهائيًا؟`)) return;
+
+    deleteAttachmentButton.disabled = true;
+    deleteAttachmentButton.textContent = "جارٍ الحذف...";
+    try {
+      await deleteAttachment(requestId, attachmentId);
+      await refreshAppData({ silent: true });
+      showToast(isImage ? "تم حذف الصورة" : "تم حذف المرفق");
+    } catch (error) {
+      handleDatabaseError(error, isImage ? "تعذر حذف الصورة" : "تعذر حذف المرفق");
+      deleteAttachmentButton.disabled = false;
+      deleteAttachmentButton.textContent = isImage ? "🗑 حذف الصورة" : "🗑 حذف المرفق";
+    }
+    return;
+  }
+
   const deleteRequestButton = event.target.closest("[data-delete-request]");
 
   if (deleteRequestButton) {

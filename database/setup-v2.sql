@@ -354,7 +354,12 @@ set search_path = ''
 as $$
 begin
   if new.request_number is null or btrim(new.request_number) = '' then
-    new.request_number := 'REQ-' || lpad(nextval('public.request_number_seq')::text, 6, '0');
+    raise exception 'Request number is required';
+  end if;
+
+  new.request_number := btrim(new.request_number);
+  if new.request_number !~ '^[0-9]{3,}$' then
+    raise exception 'Request number must contain at least 3 digits';
   end if;
 
   if auth.uid() is not null then
@@ -382,7 +387,17 @@ begin
   -- the secure deletion RPC needs to set them. The normal client update policy
   -- rejects rows whose deleted_at becomes non-null, so clients cannot bypass it.
   new.created_by := old.created_by;
-  new.request_number := old.request_number;
+
+  -- Existing legacy numbers may stay unchanged, but any changed number must be at least 3 digits.
+  if new.request_number is distinct from old.request_number then
+    if new.request_number is null or btrim(new.request_number) = '' then
+      raise exception 'Request number is required';
+    end if;
+    new.request_number := btrim(new.request_number);
+    if new.request_number !~ '^[0-9]{3,}$' then
+      raise exception 'Request number must contain at least 3 digits';
+    end if;
+  end if;
 
   return new;
 end;
@@ -597,6 +612,7 @@ grant execute on function public.delete_request_secure(uuid, text) to authentica
 -- Atomic request + purchase-items creation, so a network/database error cannot leave
 -- a materials request without its items.
 create or replace function public.create_request_secure(
+  p_request_number text,
   p_title text,
   p_request_type text,
   p_department_code text,
@@ -626,6 +642,10 @@ begin
     raise exception 'Invalid request type';
   end if;
 
+  if p_request_number is null or btrim(p_request_number) !~ '^[0-9]{3,}$' then
+    raise exception 'Request number must contain at least 3 digits';
+  end if;
+
   insert into public.requests (
     request_number,
     title,
@@ -644,7 +664,7 @@ begin
     supplier,
     sort_order
   ) values (
-    '',
+    btrim(p_request_number),
     btrim(p_title),
     p_request_type,
     p_department_code,
@@ -731,8 +751,8 @@ begin
 end;
 $$;
 
-revoke all on function public.create_request_secure(text, text, text, text, numeric, boolean, boolean, boolean, integer, bigint, jsonb) from public, anon;
-grant execute on function public.create_request_secure(text, text, text, text, numeric, boolean, boolean, boolean, integer, bigint, jsonb) to authenticated;
+revoke all on function public.create_request_secure(text, text, text, text, text, numeric, boolean, boolean, boolean, integer, bigint, jsonb) from public, anon;
+grant execute on function public.create_request_secure(text, text, text, text, text, numeric, boolean, boolean, boolean, integer, bigint, jsonb) to authenticated;
 
 
 -- =========================================================

@@ -289,6 +289,12 @@
 
       <form id="addRequestForm" class="request-form">
         <label>
+          <span>رقم الطلب</span>
+          <input name="requestNumber" type="text" inputmode="numeric" autocomplete="off" minlength="3" pattern="[0-9]{3,}" required placeholder="مثال: 123 أو 1234 أو أكثر">
+          <small>أدخل رقم الطلب يدويًا من 3 أرقام أو أكثر. يجب أن يكون غير مستخدم مسبقًا.</small>
+        </label>
+
+        <label>
           <span>النص المختصر</span>
           <input name="title" type="text" maxlength="90" required placeholder="مثال: شراء كابلات للموقع">
         </label>

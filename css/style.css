@@ -1846,6 +1846,7 @@ body.has-overlay {
 .purchase-item__compact { padding: 9px 11px; cursor: default; user-select: none; }
 .purchase-item__title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .purchase-item__title-row h3 { display:flex; align-items:center; gap:7px; margin:0; min-width:0; font-size:13px; line-height:1.5; }
+.purchase-item__compact-specs { margin:4px 0 0; color:#cbd5e1; font-size:10px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; }
 .purchase-item__summary-row { display:flex; align-items:end; justify-content:space-between; gap:10px; margin-top:5px; }
 .purchase-item__summary-meta { display:flex; flex-wrap:wrap; gap:4px 10px; color:var(--muted); font-size:9px; }
 .purchase-item__summary-meta strong { color:#e2e8f0; font-size:10px; }
@@ -1861,6 +1862,7 @@ body.has-overlay {
 .purchase-item__images-section > span { display:block; margin-bottom:7px; color:var(--muted); font-size:10px; }
 .purchase-item__images { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
 .purchase-item__images .attachment { min-width:0; }
+.purchase-item__images .attachment-card { min-width:0; }
 .purchase-item__no-images { margin:0; color:var(--muted); font-size:10px; }
 .calculated-total-field input[readonly], .request-form input[readonly] { opacity:.9; background:rgba(15,23,42,.55); }
 .item-images-field small { color:var(--muted); }
@@ -2161,3 +2163,36 @@ body.has-overlay {
     max-width: 56%;
   }
 }
+
+/* V8 - visible item specifications, deletable attachments, manual request numbers */
+.attachment-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.attachment-card .attachment {
+  width: 100%;
+}
+
+.attachment-delete-button {
+  min-height: 34px;
+  width: 100%;
+  border: 1px solid rgba(251, 113, 133, 0.32);
+  border-radius: 10px;
+  background: rgba(190, 24, 93, 0.12);
+  color: #fecdd3;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.attachment-delete-button:hover {
+  background: rgba(190, 24, 93, 0.2);
+}
+
+.attachment-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
