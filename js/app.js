@@ -361,9 +361,7 @@ function handleDatabaseError(error, prefix = "تعذر حفظ التغيير") {
         ? "رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر."
         : /Request number is required/i.test(raw)
           ? "رقم الطلب مطلوب."
-          : /Quick request location is required/i.test(raw)
-            ? "مكان الوجود مطلوب."
-            : raw || prefix;
+          : raw || prefix;
   showToast(`${prefix}: ${friendly}`);
 }
 
@@ -992,11 +990,11 @@ function renderDeletionLog() {
 
 function quickRequestCardMarkup(request) {
   const firstImage = (request.images || [])[0];
-  const title = request.title || "طلب بلا اسم";
+  const title = request.title || "طلب جديد بلا اسم";
   const department = request.department ? getDepartmentLabel(request.department) : "الجهة غير محددة";
   const imageMarkup = firstImage?.url
     ? `<img class="quick-request-card__image" src="${escapeHtml(firstImage.url)}" alt="${escapeHtml(title)}">`
-    : `<div class="quick-request-card__placeholder" aria-hidden="true">📷</div>`;
+    : `<div class="quick-request-card__placeholder" aria-label="لا توجد صورة"><span>📄</span><small>لا توجد صورة</small></div>`;
 
   return `
     <article class="quick-request-card" data-quick-request-id="${escapeHtml(request.id)}" tabindex="0" aria-label="${escapeHtml(title)}. انقر مرتين لعرض التفاصيل">
@@ -1007,7 +1005,7 @@ function quickRequestCardMarkup(request) {
       </div>
       <footer>
         <span><b>الجهة:</b> ${escapeHtml(department)}</span>
-        <span><b>المكان:</b> ${escapeHtml(request.location || "—")}</span>
+        <span><b>متابعة الورقيات:</b> ${escapeHtml(request.location || "غير محدد")}</span>
       </footer>
       <small>نقرتان لعرض كل التفاصيل</small>
     </article>
@@ -1829,7 +1827,7 @@ function renderQuickDetails(requestId) {
   const request = state.quickRequests.find((item) => item.id === requestId);
   if (!request) return;
 
-  const displayTitle = request.title || "طلب بلا اسم";
+  const displayTitle = request.title || "طلب جديد بلا اسم";
   elements.quickDetailsTitle.textContent = displayTitle;
   elements.quickDetailsContent.innerHTML = `
     <section class="quick-details-summary">
@@ -1860,8 +1858,8 @@ function renderQuickDetails(requestId) {
 
     <form class="request-form quick-details-form" data-quick-request-form="${escapeHtml(request.id)}">
       <label>
-        <span>مكان الوجود *</span>
-        <input name="location" type="text" maxlength="180" required value="${escapeHtml(request.location)}">
+        <span>مكان متابعة الورقيات <small class="optional-label">اختياري</small></span>
+        <input name="location" type="text" maxlength="180" value="${escapeHtml(request.location)}" placeholder="مثال: مكتب الطلبيات - الإدارة العامة">
       </label>
 
       <label>
@@ -1907,7 +1905,7 @@ function closeQuickDetails() {
 
 function openQuickAddForm() {
   openOverlay(elements.quickAddOverlay);
-  window.setTimeout(() => elements.quickAddForm.elements.location?.focus(), 120);
+  window.setTimeout(() => elements.quickAddForm.elements.title?.focus(), 120);
 }
 
 function closeQuickAddForm() {
@@ -1921,7 +1919,7 @@ function updateQuickImagesPreview() {
   );
   elements.quickImagesPreviewText.textContent = count
     ? `تم تجهيز ${count.toLocaleString("ar-SY")} صورة للحفظ.`
-    : "يجب إضافة صورة واحدة على الأقل. يمكنك التقاط صورة أو اختيار عدة صور.";
+    : "الصور اختيارية؛ يمكنك إضافتها الآن أو لاحقًا.";
 }
 
 function updateRequestAttachmentsPreview() {
@@ -2103,10 +2101,6 @@ async function deleteQuickRequestImage(requestId, imageId) {
   const request = state.quickRequests.find((item) => item.id === requestId);
   const image = request?.images?.find((item) => item.id === imageId);
   if (!request || !image) throw new Error("تعذر العثور على الصورة.");
-  if ((request.images || []).length <= 1) {
-    throw new Error("يجب أن يبقى للطلب صورة واحدة على الأقل.");
-  }
-
   const client = getSupabase();
   const { error: storageError } = await client.storage.from(STORAGE_BUCKET).remove([image.storagePath]);
   if (storageError) throw storageError;
@@ -2121,21 +2115,24 @@ async function deleteQuickRequestImage(requestId, imageId) {
 async function createQuickRequest(formData) {
   const client = getSupabase();
   const location = String(formData.get("location") || "").trim();
-  if (!location) throw new Error("مكان الوجود مطلوب.");
-
+  const title = String(formData.get("title") || "").trim();
+  const details = String(formData.get("details") || "").trim();
+  const department = String(formData.get("department") || "").trim() || null;
   const images = [
     ...state.quickSelectedImages,
     ...state.quickCapturedImages
   ].slice(0, MAX_ATTACHMENTS);
-  if (!images.length) throw new Error("أضف صورة واحدة على الأقل للطلب الجديد.");
 
-  const department = String(formData.get("department") || "").trim() || null;
+  if (!location && !title && !details && !department && !images.length) {
+    throw new Error("أدخل أي معلومة متوفرة أو أضف صورة قبل الحفظ.");
+  }
+
   const { data, error } = await client
     .from("quick_requests")
     .insert({
       location,
-      title: String(formData.get("title") || "").trim(),
-      details: String(formData.get("details") || "").trim(),
+      title,
+      details,
       department_code: department
     })
     .select("id")
@@ -2159,8 +2156,6 @@ async function saveQuickRequestDetails(form) {
   if (!request) return;
   const formData = new FormData(form);
   const location = String(formData.get("location") || "").trim();
-  if (!location) throw new Error("مكان الوجود مطلوب.");
-
   const department = String(formData.get("department") || "").trim() || null;
   const { error } = await getSupabase()
     .from("quick_requests")

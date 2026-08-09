@@ -8,7 +8,7 @@
 
   <title>نظام إدارة المشتريات</title>
 
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=9.1.0-20260809">
 </head>
 
 <body>
@@ -131,7 +131,7 @@
         <div>
           <p class="quick-view__eyebrow">تسجيل سريع الآن واستكمال البيانات لاحقًا</p>
           <h2 id="quickRequestsHeading">طلبات جديدة</h2>
-          <p>يكفي مكان الوجود وصورة واحدة. الاسم والتفاصيل والجهة الطالبة يمكن إضافتها لاحقًا.</p>
+          <p>سجّل أي معلومة متوفرة الآن، واستكمل بقية بيانات متابعة الورقيات لاحقًا.</p>
         </div>
         <button id="openQuickAddButton" class="primary-button quick-add-button" type="button">＋ إضافة طلب جديد</button>
       </header>
@@ -139,9 +139,9 @@
       <section id="quickRequestList" class="quick-request-grid" aria-live="polite"></section>
 
       <section id="quickEmptyState" class="empty-state" hidden>
-        <div class="empty-state__icon">📷</div>
+        <div class="empty-state__icon">📄</div>
         <h3>لا توجد طلبات جديدة بعد</h3>
-        <p>أضف أول طلب بصورة ومكان الوجود، وأكمل باقي البيانات عندما تتفرغ.</p>
+        <p>أضف أي معلومة متوفرة عن المعاملة الآن، ويمكن استكمال الباقي لاحقًا.</p>
       </section>
     </section>
   </div>
@@ -439,29 +439,16 @@
       </header>
 
       <form id="quickAddForm" class="request-form quick-request-form">
-        <label>
-          <span>مكان الوجود *</span>
-          <input name="location" type="text" maxlength="180" required placeholder="مثال: مستودع حلب - الرف 3 أو موقع المشروع">
-        </label>
-
-        <div class="file-source-field is-required">
-          <span class="file-source-field__title">صورة الطلب *</span>
-          <div class="file-source-actions">
-            <label class="file-source-button">
-              <span>🖼 اختيار صورة / صور</span>
-              <input id="quickImagesInput" type="file" accept="image/*" multiple>
-            </label>
-            <label class="file-source-button file-source-button--camera">
-              <span>📷 فتح الكاميرا</span>
-              <input id="quickCameraInput" type="file" accept="image/*" capture="environment">
-            </label>
-          </div>
-          <small id="quickImagesPreviewText">يجب إضافة صورة واحدة على الأقل. يمكنك التقاط صورة أو اختيار عدة صور.</small>
-        </div>
+        <p class="quick-form-hint">كل الحقول اختيارية. يكفي إدخال أي معلومة متوفرة الآن ثم حفظ الطلب.</p>
 
         <label>
           <span>الاسم <small class="optional-label">اختياري</small></span>
-          <input name="title" type="text" maxlength="120" placeholder="يمكن تركه فارغًا الآن">
+          <input name="title" type="text" maxlength="120" placeholder="مثال: معاملة شراء أجهزة مكتبية">
+        </label>
+
+        <label>
+          <span>التفاصيل / البنود <small class="optional-label">اختياري</small></span>
+          <textarea name="details" rows="6" maxlength="3000" placeholder="اكتب البنود أو أي تفاصيل متوفرة عن المعاملة"></textarea>
         </label>
 
         <label>
@@ -475,9 +462,24 @@
         </label>
 
         <label>
-          <span>التفاصيل / البنود <small class="optional-label">اختياري</small></span>
-          <textarea name="details" rows="6" maxlength="3000" placeholder="اكتب البنود أو أي تفاصيل عند توفرها"></textarea>
+          <span>مكان متابعة الورقيات <small class="optional-label">اختياري</small></span>
+          <input name="location" type="text" maxlength="180" placeholder="مثال: مكتب الطلبيات - الإدارة العامة">
         </label>
+
+        <div class="file-source-field">
+          <span class="file-source-field__title">صور <small class="optional-label">اختياري</small></span>
+          <div class="file-source-actions">
+            <label class="file-source-button">
+              <span>🖼 اختيار صورة / صور</span>
+              <input id="quickImagesInput" type="file" accept="image/*" multiple>
+            </label>
+            <label class="file-source-button file-source-button--camera">
+              <span>📷 فتح الكاميرا</span>
+              <input id="quickCameraInput" type="file" accept="image/*" capture="environment">
+            </label>
+          </div>
+          <small id="quickImagesPreviewText">الصور اختيارية؛ يمكنك إضافتها الآن أو لاحقًا.</small>
+        </div>
 
         <button class="primary-button" type="submit">حفظ الطلب الجديد</button>
       </form>
@@ -487,7 +489,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/supabase-config.js?v=9.1.0-20260809"></script>
+  <script src="js/app.js?v=9.1.0-20260809"></script>
 </body>
 </html>

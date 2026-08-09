@@ -1,7 +1,7 @@
 -- Basel Purchases V9 database patch
 -- Run ONCE after the V8 patch (supabase-patch-v5.sql).
 -- V9 adds a separate quick-intake area for new requests that can be saved with
--- only a location + image, then completed later with title, details and requester.
+-- any currently available information, then completed later.
 
 begin;
 
@@ -13,18 +13,23 @@ create table if not exists public.quick_requests (
   title text not null default '',
   details text not null default '',
   department_code text references public.requesting_entities(code) on delete set null,
-  location text not null,
+  location text not null default '',
   created_by uuid references auth.users(id) on delete set null,
   updated_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint quick_requests_location_check check (nullif(btrim(location), '') is not null)
+  updated_at timestamptz not null default now()
 );
 
 create index if not exists quick_requests_created_idx
   on public.quick_requests (created_at desc);
 create index if not exists quick_requests_department_idx
   on public.quick_requests (department_code);
+
+alter table public.quick_requests
+  alter column location set default '';
+
+alter table public.quick_requests
+  drop constraint if exists quick_requests_location_check;
 
 create table if not exists public.quick_request_images (
   id uuid primary key default gen_random_uuid(),
@@ -54,9 +59,6 @@ begin
   new.title := btrim(coalesce(new.title, ''));
   new.details := coalesce(new.details, '');
 
-  if new.location = '' then
-    raise exception 'Quick request location is required';
-  end if;
 
   if tg_op = 'INSERT' then
     if auth.uid() is not null then

@@ -2545,3 +2545,30 @@ body.has-overlay {
     grid-template-columns: 1fr;
   }
 }
+
+/* V9.1 - fully optional quick-intake fields */
+.quick-form-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(125, 211, 252, 0.28);
+  border-radius: 12px;
+  background: rgba(14, 165, 233, 0.06);
+  color: #bae6fd;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.quick-request-card__placeholder {
+  gap: 6px;
+  align-content: center;
+  color: #94a3b8;
+}
+
+.quick-request-card__placeholder span {
+  font-size: 38px;
+}
+
+.quick-request-card__placeholder small {
+  font-size: 9px;
+  font-weight: 700;
+}
