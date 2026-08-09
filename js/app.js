@@ -44,19 +44,26 @@ const defaultFilters = {
 
 const state = {
   requests: [],
+  quickRequests: [],
+  activeView: "requests",
   filters: loadStoredFilters(),
   draftFilters: { ...defaultFilters },
   deletionLog: [],
   activeDetailsId: null,
+  activeQuickDetailsId: null,
   detailsEditMode: false,
   editingItemId: null,
   addingItemRequestId: null,
   noteFormOpen: false,
   editingNoteId: null,
   lastCardTap: { id: null, time: 0 },
+  lastQuickCardTap: { id: null, time: 0 },
   lastDetailsTap: 0,
   suppressTapUntil: 0,
   selectedAttachments: [],
+  selectedCapturedAttachments: [],
+  quickSelectedImages: [],
+  quickCapturedImages: [],
   materialItemSequence: 0,
   syncTimer: null,
   isRefreshing: false,
@@ -72,6 +79,14 @@ const elements = {
   authSubmit: document.getElementById("authSubmit"),
   authStatus: document.getElementById("authStatus"),
   appShell: document.getElementById("appShell"),
+  requestsView: document.getElementById("requestsView"),
+  quickRequestsView: document.getElementById("quickRequestsView"),
+  showRequestsView: document.getElementById("showRequestsView"),
+  showQuickRequestsView: document.getElementById("showQuickRequestsView"),
+  quickRequestsCount: document.getElementById("quickRequestsCount"),
+  quickRequestList: document.getElementById("quickRequestList"),
+  quickEmptyState: document.getElementById("quickEmptyState"),
+  openQuickAddButton: document.getElementById("openQuickAddButton"),
   currentUserName: document.getElementById("currentUserName"),
   currentUserRole: document.getElementById("currentUserRole"),
   logoutButton: document.getElementById("logoutButton"),
@@ -96,6 +111,14 @@ const elements = {
   detailsSheet: document.getElementById("detailsSheet"),
   detailsTitle: document.getElementById("detailsTitle"),
   detailsContent: document.getElementById("detailsContent"),
+  quickDetailsOverlay: document.getElementById("quickDetailsOverlay"),
+  quickDetailsTitle: document.getElementById("quickDetailsTitle"),
+  quickDetailsContent: document.getElementById("quickDetailsContent"),
+  quickAddOverlay: document.getElementById("quickAddOverlay"),
+  quickAddForm: document.getElementById("quickAddForm"),
+  quickImagesInput: document.getElementById("quickImagesInput"),
+  quickCameraInput: document.getElementById("quickCameraInput"),
+  quickImagesPreviewText: document.getElementById("quickImagesPreviewText"),
   addOverlay: document.getElementById("addOverlay"),
   addRequestButton: document.getElementById("addRequestButton"),
   addRequestForm: document.getElementById("addRequestForm"),
@@ -105,6 +128,7 @@ const elements = {
   workDescriptionField: document.getElementById("workDescriptionField"),
   requestAttachmentsField: document.getElementById("requestAttachmentsField"),
   attachmentsInput: document.getElementById("attachmentsInput"),
+  attachmentsCameraInput: document.getElementById("attachmentsCameraInput"),
   attachmentsPreviewText: document.getElementById("attachmentsPreviewText"),
   toast: document.getElementById("toast")
 };
@@ -235,6 +259,33 @@ function dbRequestToApp(row) {
   };
 }
 
+function dbQuickImageToApp(image) {
+  return {
+    id: image.id,
+    storagePath: image.storage_path,
+    name: image.original_name,
+    mimeType: image.mime_type || "image/jpeg",
+    sizeBytes: Number(image.size_bytes || 0),
+    createdAt: image.created_at,
+    url: ""
+  };
+}
+
+function dbQuickRequestToApp(row) {
+  return {
+    id: row.id,
+    title: String(row.title || ""),
+    details: String(row.details || ""),
+    department: row.department_code || "",
+    location: String(row.location || ""),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || null,
+    images: [...(row.quick_request_images || [])]
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map(dbQuickImageToApp)
+  };
+}
+
 function dbDeletionToApp(row) {
   return {
     id: String(row.id),
@@ -310,7 +361,9 @@ function handleDatabaseError(error, prefix = "تعذر حفظ التغيير") {
         ? "رقم الطلب يجب أن يتكون من 3 أرقام أو أكثر."
         : /Request number is required/i.test(raw)
           ? "رقم الطلب مطلوب."
-          : raw || prefix;
+          : /Quick request location is required/i.test(raw)
+            ? "مكان الوجود مطلوب."
+            : raw || prefix;
   showToast(`${prefix}: ${friendly}`);
 }
 
@@ -342,7 +395,7 @@ function showApplication() {
   state.isAuthenticated = true;
   elements.authGate.hidden = true;
   elements.appShell.hidden = false;
-  elements.addRequestButton.hidden = false;
+  syncActiveView();
   elements.currentUserName.textContent = CURRENT_USER.name || "مستخدم";
   elements.currentUserRole.textContent = CURRENT_USER.role === "admin" ? "مدير" : "مستخدم";
 }
@@ -380,6 +433,41 @@ async function hydrateAttachmentUrls(requests) {
   attachments.forEach((attachment, index) => {
     attachment.url = data?.[index]?.signedUrl || "";
   });
+}
+
+async function hydrateQuickImageUrls(requests) {
+  const images = requests.flatMap((request) => request.images || []);
+  if (!images.length) return;
+
+  const { data, error } = await getSupabase().storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrls(images.map((image) => image.storagePath), 60 * 60);
+
+  if (error) {
+    console.warn("تعذر إنشاء روابط مؤقتة لصور الطلبات الجديدة.", error);
+    return;
+  }
+
+  images.forEach((image, index) => {
+    image.url = data?.[index]?.signedUrl || "";
+  });
+}
+
+async function fetchQuickRequests() {
+  const { data, error } = await getSupabase()
+    .from("quick_requests")
+    .select(`
+      id, title, details, department_code, location, created_at, updated_at,
+      quick_request_images (
+        id, storage_path, original_name, mime_type, size_bytes, created_at
+      )
+    `)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  const requests = (data || []).map(dbQuickRequestToApp);
+  await hydrateQuickImageUrls(requests);
+  return requests;
 }
 
 async function fetchRequests() {
@@ -428,12 +516,14 @@ async function refreshAppData({ silent = false } = {}) {
   if (!silent) showToast("جارٍ تحديث البيانات...");
 
   try {
-    const [requests, deletionLog] = await Promise.all([
+    const [requests, quickRequests, deletionLog] = await Promise.all([
       fetchRequests(),
+      fetchQuickRequests(),
       fetchDeletionLog()
     ]);
 
     state.requests = requests;
+    state.quickRequests = quickRequests;
     state.deletionLog = deletionLog;
     render();
 
@@ -441,6 +531,12 @@ async function refreshAppData({ silent = false } = {}) {
       const stillExists = state.requests.some((request) => request.id === state.activeDetailsId);
       if (stillExists) renderDetails(state.activeDetailsId);
       else closeDetails();
+    }
+
+    if (state.activeQuickDetailsId) {
+      const stillExists = state.quickRequests.some((request) => request.id === state.activeQuickDetailsId);
+      if (stillExists) renderQuickDetails(state.activeQuickDetailsId);
+      else closeQuickDetails();
     }
 
     if (!silent) showToast("تم تحديث البيانات");
@@ -468,7 +564,9 @@ function canAutoRefresh() {
   return state.isAuthenticated &&
     document.visibilityState === "visible" &&
     elements.detailsOverlay.hidden &&
+    elements.quickDetailsOverlay.hidden &&
     elements.addOverlay.hidden &&
+    elements.quickAddOverlay.hidden &&
     elements.filtersOverlay.hidden;
 }
 
@@ -513,6 +611,7 @@ async function initializeAuthentication() {
       if (event === "SIGNED_OUT" || !session) {
         showAuthGate();
         state.requests = [];
+        state.quickRequests = [];
         state.deletionLog = [];
         return;
       }
@@ -891,6 +990,51 @@ function renderDeletionLog() {
     .join("");
 }
 
+function quickRequestCardMarkup(request) {
+  const firstImage = (request.images || [])[0];
+  const title = request.title || "طلب بلا اسم";
+  const department = request.department ? getDepartmentLabel(request.department) : "الجهة غير محددة";
+  const imageMarkup = firstImage?.url
+    ? `<img class="quick-request-card__image" src="${escapeHtml(firstImage.url)}" alt="${escapeHtml(title)}">`
+    : `<div class="quick-request-card__placeholder" aria-hidden="true">📷</div>`;
+
+  return `
+    <article class="quick-request-card" data-quick-request-id="${escapeHtml(request.id)}" tabindex="0" aria-label="${escapeHtml(title)}. انقر مرتين لعرض التفاصيل">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="quick-request-card__media">
+        ${imageMarkup}
+        ${(request.images || []).length > 1 ? `<span class="quick-request-card__image-count">${request.images.length.toLocaleString("ar-SY")} صور</span>` : ""}
+      </div>
+      <footer>
+        <span><b>الجهة:</b> ${escapeHtml(department)}</span>
+        <span><b>المكان:</b> ${escapeHtml(request.location || "—")}</span>
+      </footer>
+      <small>نقرتان لعرض كل التفاصيل</small>
+    </article>
+  `;
+}
+
+function renderQuickRequests() {
+  elements.quickRequestList.innerHTML = state.quickRequests.map(quickRequestCardMarkup).join("");
+  elements.quickEmptyState.hidden = state.quickRequests.length !== 0;
+  elements.quickRequestList.hidden = state.quickRequests.length === 0;
+  elements.quickRequestsCount.textContent = state.quickRequests.length.toLocaleString("ar-SY");
+}
+
+function syncActiveView() {
+  const isQuick = state.activeView === "quick";
+  elements.requestsView.hidden = isQuick;
+  elements.quickRequestsView.hidden = !isQuick;
+  elements.showRequestsView.classList.toggle("is-active", !isQuick);
+  elements.showQuickRequestsView.classList.toggle("is-active", isQuick);
+  elements.addRequestButton.hidden = !state.isAuthenticated || isQuick;
+}
+
+function setActiveView(view) {
+  state.activeView = view === "quick" ? "quick" : "requests";
+  syncActiveView();
+}
+
 function render() {
   const filteredRequests = getFilteredRequests();
 
@@ -920,6 +1064,8 @@ function render() {
   elements.searchInput.value = state.filters.query;
   renderAppliedFilters();
   renderDeletionLog();
+  renderQuickRequests();
+  syncActiveView();
 }
 
 function showToast(message) {
@@ -1301,11 +1447,20 @@ function purchaseItemEditFormMarkup(request, item, index, isNew = false) {
         </select>
       </label>
 
-      <label class="is-wide purchase-item-edit-images">
-        <span>${isNew ? "صور البند" : "إضافة صور جديدة للبند"}</span>
-        <input name="itemImages" type="file" accept="image/*" multiple>
-        <small>يمكن اختيار عدة صور دفعة واحدة، بحد أقصى ${MAX_ATTACHMENTS} صور في كل مرة.</small>
-      </label>
+      <div class="is-wide purchase-item-edit-images file-source-field">
+        <span class="file-source-field__title">${isNew ? "صور البند" : "إضافة صور جديدة للبند"}</span>
+        <div class="file-source-actions">
+          <label class="file-source-button">
+            <span>🖼 اختيار صور</span>
+            <input name="itemImages" type="file" accept="image/*" multiple>
+          </label>
+          <label class="file-source-button file-source-button--camera">
+            <span>📷 فتح الكاميرا</span>
+            <input name="itemCamera" type="file" accept="image/*" capture="environment">
+          </label>
+        </div>
+        <small>يمكن اختيار عدة صور، أو التقاط صورة مباشرة بالكاميرا.</small>
+      </div>
 
       <div class="request-edit-actions is-wide">
         <button class="primary-button" type="submit">${isNew ? "إضافة البند" : "حفظ البند"}</button>
@@ -1398,11 +1553,19 @@ function purchaseItemMarkup(request, item, index) {
           <span>صور البند (${itemAttachments.length.toLocaleString("ar-SY")})</span>
           ${itemImagesMarkup}
           ${isEditing ? "" : `
-            <label class="purchase-item__add-images">
-              <span>إضافة صور أخرى</span>
-              <input type="file" accept="image/*" multiple data-add-item-images-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
-              <small>يمكن اختيار عدة صور دفعة واحدة.</small>
-            </label>
+            <div class="purchase-item__add-images file-source-field">
+              <span class="file-source-field__title">إضافة صور أخرى</span>
+              <div class="file-source-actions">
+                <label class="file-source-button">
+                  <span>🖼 اختيار صور</span>
+                  <input type="file" accept="image/*" multiple data-add-item-images-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
+                </label>
+                <label class="file-source-button file-source-button--camera">
+                  <span>📷 فتح الكاميرا</span>
+                  <input type="file" accept="image/*" capture="environment" data-add-item-camera-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
+                </label>
+              </div>
+            </div>
           `}
         </div>
       </div>
@@ -1488,11 +1651,20 @@ function requestAttachmentsMarkup(request) {
         </div>
       </div>
       ${requestLevelAttachments.length ? `<div class="attachments">${attachmentsMarkup}</div>` : attachmentsMarkup}
-      <label class="request-add-images">
-        <span>＋ إضافة صور للطلب / أمر التشغيل</span>
-        <input type="file" accept="image/*" multiple data-add-request-images="${escapeHtml(request.id)}">
+      <div class="request-add-images file-source-field">
+        <span class="file-source-field__title">＋ إضافة صور للطلب / أمر التشغيل</span>
+        <div class="file-source-actions">
+          <label class="file-source-button">
+            <span>🖼 اختيار صور</span>
+            <input type="file" accept="image/*" multiple data-add-request-images="${escapeHtml(request.id)}">
+          </label>
+          <label class="file-source-button file-source-button--camera">
+            <span>📷 فتح الكاميرا</span>
+            <input type="file" accept="image/*" capture="environment" data-add-request-camera="${escapeHtml(request.id)}">
+          </label>
+        </div>
         <small>يمكن إضافة عدة صور في كل مرة بدون حذف الصور السابقة. الحد الأقصى ${MAX_ATTACHMENTS} صور لكل دفعة.</small>
-      </label>
+      </div>
     </section>
   `;
 }
@@ -1633,6 +1805,135 @@ function closeAddForm() {
   closeOverlay(elements.addOverlay);
 }
 
+function quickRequestImagesMarkup(request) {
+  const images = request.images || [];
+  if (!images.length) {
+    return '<p class="quick-images-empty">لا توجد صور لهذا الطلب.</p>';
+  }
+
+  return `
+    <div class="quick-details-images">
+      ${images.map((image) => `
+        <div class="quick-details-image-card">
+          <a href="${escapeHtml(image.url)}" target="_blank" rel="noopener">
+            <img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.name || request.title || "صورة الطلب")}">
+          </a>
+          <button type="button" data-delete-quick-image="${escapeHtml(image.id)}" data-quick-request-id="${escapeHtml(request.id)}">🗑 حذف الصورة</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderQuickDetails(requestId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) return;
+
+  const displayTitle = request.title || "طلب بلا اسم";
+  elements.quickDetailsTitle.textContent = displayTitle;
+  elements.quickDetailsContent.innerHTML = `
+    <section class="quick-details-summary">
+      <span>أضيف: ${escapeHtml(formatDate(request.createdAt, true))}</span>
+      ${request.updatedAt ? `<span>آخر تعديل: ${escapeHtml(formatDate(request.updatedAt, true))}</span>` : ""}
+    </section>
+
+    <section class="quick-details-images-section">
+      <div class="quick-details-section-heading">
+        <h3>الصور</h3>
+        <span>${(request.images || []).length.toLocaleString("ar-SY")}</span>
+      </div>
+      ${quickRequestImagesMarkup(request)}
+      <div class="file-source-field quick-details-add-images">
+        <span class="file-source-field__title">إضافة صور أخرى</span>
+        <div class="file-source-actions">
+          <label class="file-source-button">
+            <span>🖼 اختيار صور</span>
+            <input type="file" accept="image/*" multiple data-add-quick-images="${escapeHtml(request.id)}">
+          </label>
+          <label class="file-source-button file-source-button--camera">
+            <span>📷 فتح الكاميرا</span>
+            <input type="file" accept="image/*" capture="environment" data-add-quick-camera="${escapeHtml(request.id)}">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <form class="request-form quick-details-form" data-quick-request-form="${escapeHtml(request.id)}">
+      <label>
+        <span>مكان الوجود *</span>
+        <input name="location" type="text" maxlength="180" required value="${escapeHtml(request.location)}">
+      </label>
+
+      <label>
+        <span>الاسم <small class="optional-label">اختياري</small></span>
+        <input name="title" type="text" maxlength="120" value="${escapeHtml(request.title)}" placeholder="يمكن تركه بلا اسم">
+      </label>
+
+      <label>
+        <span>الجهة الطالبة <small class="optional-label">اختياري</small></span>
+        <select name="department">
+          <option value="" ${!request.department ? "selected" : ""}>غير محددة الآن</option>
+          <option value="operations" ${request.department === "operations" ? "selected" : ""}>العمليات</option>
+          <option value="engineering" ${request.department === "engineering" ? "selected" : ""}>الهندسية</option>
+          <option value="technical" ${request.department === "technical" ? "selected" : ""}>الفنية</option>
+        </select>
+      </label>
+
+      <label>
+        <span>التفاصيل / البنود <small class="optional-label">اختياري</small></span>
+        <textarea name="details" rows="8" maxlength="3000" placeholder="اكتب البنود أو التفاصيل هنا">${escapeHtml(request.details)}</textarea>
+      </label>
+
+      <div class="quick-details-actions">
+        <button class="primary-button" type="submit">حفظ التعديلات</button>
+        <button class="detail-delete-button" type="button" data-delete-quick-request="${escapeHtml(request.id)}">حذف الطلب الجديد</button>
+      </div>
+    </form>
+  `;
+}
+
+function openQuickDetails(requestId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) return;
+  state.activeQuickDetailsId = requestId;
+  renderQuickDetails(requestId);
+  openOverlay(elements.quickDetailsOverlay);
+}
+
+function closeQuickDetails() {
+  state.activeQuickDetailsId = null;
+  closeOverlay(elements.quickDetailsOverlay);
+}
+
+function openQuickAddForm() {
+  openOverlay(elements.quickAddOverlay);
+  window.setTimeout(() => elements.quickAddForm.elements.location?.focus(), 120);
+}
+
+function closeQuickAddForm() {
+  closeOverlay(elements.quickAddOverlay);
+}
+
+function updateQuickImagesPreview() {
+  const count = Math.min(
+    state.quickSelectedImages.length + state.quickCapturedImages.length,
+    MAX_ATTACHMENTS
+  );
+  elements.quickImagesPreviewText.textContent = count
+    ? `تم تجهيز ${count.toLocaleString("ar-SY")} صورة للحفظ.`
+    : "يجب إضافة صورة واحدة على الأقل. يمكنك التقاط صورة أو اختيار عدة صور.";
+}
+
+function updateRequestAttachmentsPreview() {
+  const count = Math.min(
+    state.selectedAttachments.length + state.selectedCapturedAttachments.length,
+    MAX_ATTACHMENTS
+  );
+  elements.attachmentsPreviewText.textContent = count
+    ? `تم تجهيز ${count.toLocaleString("ar-SY")} ملف/صورة للرفع.`
+    : "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.";
+}
+
 function generateRequestId() {
   return crypto.randomUUID();
 }
@@ -1753,9 +2054,148 @@ async function uploadRequestAttachments(requestId, attachments) {
 }
 
 async function uploadSelectedAttachments(requestId) {
-  return uploadRequestAttachments(requestId, state.selectedAttachments);
+  const attachments = [
+    ...state.selectedAttachments,
+    ...state.selectedCapturedAttachments
+  ].slice(0, MAX_ATTACHMENTS);
+  return uploadRequestAttachments(requestId, attachments);
 }
 
+
+async function uploadQuickRequestImages(requestId, attachments) {
+  const client = getSupabase();
+  const preparedImages = attachments
+    .filter((attachment) => String(attachment.mimeType || "").startsWith("image/"))
+    .slice(0, MAX_ATTACHMENTS);
+  const uploadedPaths = [];
+
+  try {
+    for (const attachment of preparedImages) {
+      const storagePath = `${requestId}/${safeStorageFileName(attachment.file.name)}`;
+      const { error: uploadError } = await client.storage
+        .from(STORAGE_BUCKET)
+        .upload(storagePath, attachment.file, {
+          contentType: attachment.mimeType,
+          upsert: false
+        });
+      if (uploadError) throw uploadError;
+      uploadedPaths.push(storagePath);
+
+      const { error: metadataError } = await client.from("quick_request_images").insert({
+        quick_request_id: requestId,
+        storage_path: storagePath,
+        original_name: attachment.originalName,
+        mime_type: attachment.mimeType,
+        size_bytes: attachment.file.size
+      });
+      if (metadataError) throw metadataError;
+    }
+  } catch (error) {
+    if (uploadedPaths.length) {
+      await client.storage.from(STORAGE_BUCKET).remove(uploadedPaths).catch(() => {});
+      await client.from("quick_request_images").delete().eq("quick_request_id", requestId).in("storage_path", uploadedPaths);
+    }
+    throw error;
+  }
+}
+
+async function deleteQuickRequestImage(requestId, imageId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  const image = request?.images?.find((item) => item.id === imageId);
+  if (!request || !image) throw new Error("تعذر العثور على الصورة.");
+  if ((request.images || []).length <= 1) {
+    throw new Error("يجب أن يبقى للطلب صورة واحدة على الأقل.");
+  }
+
+  const client = getSupabase();
+  const { error: storageError } = await client.storage.from(STORAGE_BUCKET).remove([image.storagePath]);
+  if (storageError) throw storageError;
+  const { error: metadataError } = await client
+    .from("quick_request_images")
+    .delete()
+    .eq("id", imageId)
+    .eq("quick_request_id", requestId);
+  if (metadataError) throw metadataError;
+}
+
+async function createQuickRequest(formData) {
+  const client = getSupabase();
+  const location = String(formData.get("location") || "").trim();
+  if (!location) throw new Error("مكان الوجود مطلوب.");
+
+  const images = [
+    ...state.quickSelectedImages,
+    ...state.quickCapturedImages
+  ].slice(0, MAX_ATTACHMENTS);
+  if (!images.length) throw new Error("أضف صورة واحدة على الأقل للطلب الجديد.");
+
+  const department = String(formData.get("department") || "").trim() || null;
+  const { data, error } = await client
+    .from("quick_requests")
+    .insert({
+      location,
+      title: String(formData.get("title") || "").trim(),
+      details: String(formData.get("details") || "").trim(),
+      department_code: department
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  try {
+    await uploadQuickRequestImages(data.id, images);
+  } catch (uploadError) {
+    await client.from("quick_requests").delete().eq("id", data.id);
+    throw uploadError;
+  }
+
+  await refreshAppData({ silent: true });
+  return data.id;
+}
+
+async function saveQuickRequestDetails(form) {
+  const requestId = form.dataset.quickRequestForm;
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) return;
+  const formData = new FormData(form);
+  const location = String(formData.get("location") || "").trim();
+  if (!location) throw new Error("مكان الوجود مطلوب.");
+
+  const department = String(formData.get("department") || "").trim() || null;
+  const { error } = await getSupabase()
+    .from("quick_requests")
+    .update({
+      location,
+      title: String(formData.get("title") || "").trim(),
+      details: String(formData.get("details") || "").trim(),
+      department_code: department
+    })
+    .eq("id", requestId);
+  if (error) throw error;
+
+  await refreshAppData({ silent: true });
+  showToast("تم حفظ بيانات الطلب الجديد");
+}
+
+async function deleteQuickRequest(requestId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) return;
+  const title = request.title || "الطلب بلا اسم";
+  if (!window.confirm(`هل تريد حذف «${title}» وصوره نهائيًا؟`)) return;
+
+  const client = getSupabase();
+  const paths = (request.images || []).map((image) => image.storagePath).filter(Boolean);
+  if (paths.length) {
+    const { error: storageError } = await client.storage.from(STORAGE_BUCKET).remove(paths);
+    if (storageError) throw storageError;
+  }
+
+  const { error } = await client.from("quick_requests").delete().eq("id", requestId);
+  if (error) throw error;
+  closeQuickDetails();
+  await refreshAppData({ silent: true });
+  showToast("تم حذف الطلب الجديد");
+}
 
 async function uploadItemAttachments(requestId, itemId, attachments) {
   const client = getSupabase();
@@ -1784,7 +2224,8 @@ async function prepareMaterialItemImages() {
   const prepared = [];
   for (const [index, editor] of editors.entries()) {
     const input = editor.querySelector("[data-item-images]");
-    const files = [...(input?.files || [])];
+    const cameraInput = editor.querySelector("[data-item-camera]");
+    const files = [...(input?.files || []), ...(cameraInput?.files || [])].slice(0, MAX_ATTACHMENTS);
     if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
       throw new Error(`صور البند ${(index + 1).toLocaleString("ar-SY")} يجب أن تكون ملفات صور فقط.`);
     }
@@ -1851,11 +2292,20 @@ function materialItemEditorMarkup() {
         </label>
       </div>
 
-      <label class="item-images-field">
-        <span>صور البند</span>
-        <input data-item-images type="file" accept="image/*" multiple>
+      <div class="item-images-field file-source-field">
+        <span class="file-source-field__title">صور البند</span>
+        <div class="file-source-actions">
+          <label class="file-source-button">
+            <span>🖼 اختيار صور</span>
+            <input data-item-images type="file" accept="image/*" multiple>
+          </label>
+          <label class="file-source-button file-source-button--camera">
+            <span>📷 فتح الكاميرا</span>
+            <input data-item-camera type="file" accept="image/*" capture="environment">
+          </label>
+        </div>
         <small data-item-images-preview>يمكن رفع حتى ${MAX_ATTACHMENTS} صور لهذا البند.</small>
-      </label>
+      </div>
 
       <label class="check-row material-item-available">
         <input data-editor-available type="checkbox" checked>
@@ -2175,7 +2625,10 @@ async function savePurchaseItemDetails(form, isNew) {
     ? request.items.length
     : Math.max(0, request.items.findIndex((item) => item.id === form.dataset.itemId));
   const { payload } = collectDetailsItemForm(form, currentIndex);
-  const files = [...(form.querySelector('[name="itemImages"]')?.files || [])];
+  const files = [
+    ...(form.querySelector('[name="itemImages"]')?.files || []),
+    ...(form.querySelector('[name="itemCamera"]')?.files || [])
+  ].slice(0, MAX_ATTACHMENTS);
   if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
     throw new Error("اختر ملفات صور فقط للبند.");
   }
@@ -2328,7 +2781,7 @@ async function addRequest(formData) {
     }
   }
 
-  if (state.selectedAttachments.length) {
+  if (state.selectedAttachments.length || state.selectedCapturedAttachments.length) {
     try {
       await uploadSelectedAttachments(requestId);
     } catch (error) {
@@ -2598,6 +3051,103 @@ elements.requestList.addEventListener("keydown", (event) => {
   }
 });
 
+elements.quickRequestList.addEventListener("click", (event) => {
+  const card = event.target.closest(".quick-request-card");
+  if (!card) return;
+  const now = Date.now();
+  const requestId = card.dataset.quickRequestId;
+  const isDoubleTap = state.lastQuickCardTap.id === requestId && now - state.lastQuickCardTap.time <= 360;
+  if (isDoubleTap) {
+    openQuickDetails(requestId);
+    state.lastQuickCardTap = { id: null, time: 0 };
+    return;
+  }
+  state.lastQuickCardTap = { id: requestId, time: now };
+  card.classList.add("is-tap-feedback");
+  window.setTimeout(() => card.classList.remove("is-tap-feedback"), 170);
+});
+
+elements.quickRequestList.addEventListener("dblclick", (event) => {
+  const card = event.target.closest(".quick-request-card");
+  if (card) openQuickDetails(card.dataset.quickRequestId);
+});
+
+elements.quickRequestList.addEventListener("keydown", (event) => {
+  const card = event.target.closest(".quick-request-card");
+  if (!card) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    openQuickDetails(card.dataset.quickRequestId);
+  }
+});
+
+elements.quickDetailsContent.addEventListener("change", async (event) => {
+  const input = event.target.closest("[data-add-quick-images], [data-add-quick-camera]");
+  if (!input) return;
+  const requestId = input.dataset.addQuickImages || input.dataset.addQuickCamera;
+  const files = [...input.files];
+  if (!files.length) return;
+
+  try {
+    if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+      throw new Error("اختر ملفات صور فقط.");
+    }
+    showToast("جارٍ تجهيز الصور...");
+    const prepared = await prepareSelectedAttachments(files);
+    await uploadQuickRequestImages(requestId, prepared);
+    await refreshAppData({ silent: true });
+    showToast(`تمت إضافة ${prepared.length.toLocaleString("ar-SY")} صورة`);
+  } catch (error) {
+    handleDatabaseError(error, "تعذر إضافة الصور");
+  }
+});
+
+elements.quickDetailsContent.addEventListener("click", async (event) => {
+  const deleteImageButton = event.target.closest("[data-delete-quick-image]");
+  if (deleteImageButton) {
+    const requestId = deleteImageButton.dataset.quickRequestId;
+    const imageId = deleteImageButton.dataset.deleteQuickImage;
+    if (!window.confirm("هل تريد حذف هذه الصورة؟")) return;
+    try {
+      await deleteQuickRequestImage(requestId, imageId);
+      await refreshAppData({ silent: true });
+      showToast("تم حذف الصورة");
+    } catch (error) {
+      handleDatabaseError(error, "تعذر حذف الصورة");
+    }
+    return;
+  }
+
+  const deleteRequestButton = event.target.closest("[data-delete-quick-request]");
+  if (deleteRequestButton) {
+    try {
+      await deleteQuickRequest(deleteRequestButton.dataset.deleteQuickRequest);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر حذف الطلب الجديد");
+    }
+  }
+});
+
+elements.quickDetailsContent.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-quick-request-form]");
+  if (!form) return;
+  event.preventDefault();
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "جارٍ الحفظ...";
+  }
+  try {
+    await saveQuickRequestDetails(form);
+  } catch (error) {
+    handleDatabaseError(error, "تعذر حفظ بيانات الطلب الجديد");
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "حفظ التعديلات";
+    }
+  }
+});
+
 elements.detailsContent.addEventListener("click", async (event) => {
   const openRequestEditButton = event.target.closest("[data-open-request-edit]");
   if (openRequestEditButton) {
@@ -2805,9 +3355,9 @@ elements.detailsContent.addEventListener("click", async (event) => {
 });
 
 elements.detailsContent.addEventListener("change", async (event) => {
-  const requestImagesInput = event.target.closest("[data-add-request-images]");
+  const requestImagesInput = event.target.closest("[data-add-request-images], [data-add-request-camera]");
   if (requestImagesInput) {
-    const requestId = requestImagesInput.dataset.addRequestImages;
+    const requestId = requestImagesInput.dataset.addRequestImages || requestImagesInput.dataset.addRequestCamera;
     const files = [...requestImagesInput.files];
     if (!files.length) return;
     try {
@@ -2824,9 +3374,9 @@ elements.detailsContent.addEventListener("change", async (event) => {
     }
     return;
   }
-  const itemImagesInput = event.target.closest("[data-add-item-images-request]");
+  const itemImagesInput = event.target.closest("[data-add-item-images-request], [data-add-item-camera-request]");
   if (itemImagesInput) {
-    const requestId = itemImagesInput.dataset.addItemImagesRequest;
+    const requestId = itemImagesInput.dataset.addItemImagesRequest || itemImagesInput.dataset.addItemCameraRequest;
     const itemId = itemImagesInput.dataset.itemId;
     const files = [...itemImagesInput.files];
     if (!files.length) return;
@@ -3107,6 +3657,69 @@ document.querySelectorAll("[data-close-filters]").forEach((element) => {
   element.addEventListener("click", closeFilters);
 });
 
+elements.showRequestsView.addEventListener("click", () => setActiveView("requests"));
+elements.showQuickRequestsView.addEventListener("click", () => setActiveView("quick"));
+elements.openQuickAddButton.addEventListener("click", openQuickAddForm);
+
+document.querySelectorAll("[data-close-quick-add]").forEach((element) => {
+  element.addEventListener("click", closeQuickAddForm);
+});
+
+document.querySelectorAll("[data-close-quick-details]").forEach((element) => {
+  element.addEventListener("click", closeQuickDetails);
+});
+
+elements.quickImagesInput.addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  try {
+    if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+      throw new Error("اختر ملفات صور فقط.");
+    }
+    state.quickSelectedImages = files.length ? await prepareSelectedAttachments(files) : [];
+    updateQuickImagesPreview();
+  } catch (error) {
+    state.quickSelectedImages = [];
+    updateQuickImagesPreview();
+    handleDatabaseError(error, "تعذر تجهيز الصور");
+  }
+});
+
+elements.quickCameraInput.addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  if (!files.length) return;
+  try {
+    const prepared = await prepareSelectedAttachments(files);
+    state.quickCapturedImages = [...state.quickCapturedImages, ...prepared].slice(0, MAX_ATTACHMENTS);
+    updateQuickImagesPreview();
+    event.target.value = "";
+  } catch (error) {
+    handleDatabaseError(error, "تعذر تجهيز صورة الكاميرا");
+  }
+});
+
+elements.quickAddForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submitButton = elements.quickAddForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = "جارٍ الحفظ...";
+
+  try {
+    await createQuickRequest(new FormData(elements.quickAddForm));
+    elements.quickAddForm.reset();
+    state.quickSelectedImages = [];
+    state.quickCapturedImages = [];
+    updateQuickImagesPreview();
+    closeQuickAddForm();
+    setActiveView("quick");
+    showToast("تم حفظ الطلب الجديد، ويمكن استكمال بياناته لاحقًا");
+  } catch (error) {
+    handleDatabaseError(error, "تعذر حفظ الطلب الجديد");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "حفظ الطلب الجديد";
+  }
+});
+
 elements.addRequestButton.addEventListener("click", openAddForm);
 
 elements.addMaterialItemButton.addEventListener("click", () => {
@@ -3147,12 +3760,14 @@ elements.materialItemsEditor.addEventListener("change", (event) => {
     if (labelText) labelText.textContent = availability.checked ? "البند موجود" : "البند غير موجود";
   }
 
-  const imagesInput = event.target.closest("[data-item-images]");
+  const imagesInput = event.target.closest("[data-item-images], [data-item-camera]");
   if (imagesInput) {
     const preview = editor?.querySelector("[data-item-images-preview]");
-    const count = Math.min(imagesInput.files.length, MAX_ATTACHMENTS);
+    const galleryCount = editor?.querySelector("[data-item-images]")?.files?.length || 0;
+    const cameraCount = editor?.querySelector("[data-item-camera]")?.files?.length || 0;
+    const count = Math.min(galleryCount + cameraCount, MAX_ATTACHMENTS);
     if (preview) preview.textContent = count ? `تم اختيار ${count} صورة لهذا البند.` : `يمكن رفع حتى ${MAX_ATTACHMENTS} صور لهذا البند.`;
-    if (imagesInput.files.length > MAX_ATTACHMENTS) showToast(`سيتم اعتماد أول ${MAX_ATTACHMENTS} صور فقط لهذا البند`);
+    if (galleryCount + cameraCount > MAX_ATTACHMENTS) showToast(`سيتم اعتماد أول ${MAX_ATTACHMENTS} صور فقط لهذا البند`);
   }
 });
 
@@ -3173,28 +3788,33 @@ elements.materialItemsEditor.addEventListener("input", (event) => {
 
 elements.attachmentsInput.addEventListener("change", async (event) => {
   const fileCount = event.target.files.length;
-
-  if (fileCount === 0) {
-    state.selectedAttachments = [];
-    elements.attachmentsPreviewText.textContent =
-      "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.";
-    return;
-  }
-
-  elements.attachmentsPreviewText.textContent = "جارٍ تجهيز الملفات...";
-
+  elements.attachmentsPreviewText.textContent = fileCount ? "جارٍ تجهيز الملفات..." : "";
   try {
-    state.selectedAttachments = await prepareSelectedAttachments(event.target.files);
-    elements.attachmentsPreviewText.textContent = state.selectedAttachments.length > 0
-      ? `تم تجهيز ${state.selectedAttachments.length} ملف/صورة للرفع.`
-      : "تعذر تجهيز الملفات المختارة.";
+    state.selectedAttachments = fileCount
+      ? await prepareSelectedAttachments(event.target.files)
+      : [];
+    updateRequestAttachmentsPreview();
   } catch (error) {
     state.selectedAttachments = [];
+    updateRequestAttachmentsPreview();
     handleDatabaseError(error, "تعذر تجهيز الملفات");
   }
+  if (fileCount > MAX_ATTACHMENTS) showToast(`تم اعتماد أول ${MAX_ATTACHMENTS} ملفات فقط`);
+});
 
-  if (fileCount > MAX_ATTACHMENTS) {
-    showToast(`تم اعتماد أول ${MAX_ATTACHMENTS} ملفات فقط`);
+elements.attachmentsCameraInput.addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  if (!files.length) return;
+  try {
+    const prepared = await prepareSelectedAttachments(files);
+    state.selectedCapturedAttachments = [
+      ...state.selectedCapturedAttachments,
+      ...prepared
+    ].slice(0, MAX_ATTACHMENTS);
+    updateRequestAttachmentsPreview();
+    event.target.value = "";
+  } catch (error) {
+    handleDatabaseError(error, "تعذر تجهيز صورة الكاميرا");
   }
 });
 
@@ -3220,8 +3840,8 @@ elements.addRequestForm.addEventListener("submit", async (event) => {
   resetMaterialItemsEditor();
   syncRequestTypeFields();
   state.selectedAttachments = [];
-  elements.attachmentsPreviewText.textContent =
-    "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.";
+  state.selectedCapturedAttachments = [];
+  updateRequestAttachmentsPreview();
   submitButton.disabled = false;
   submitButton.textContent = "إضافة الطلب";
 
@@ -3235,6 +3855,14 @@ elements.addRequestForm.addEventListener("submit", async (event) => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+
+  if (!elements.quickDetailsOverlay.hidden) {
+    closeQuickDetails();
+  }
+
+  if (!elements.quickAddOverlay.hidden) {
+    closeQuickAddForm();
+  }
 
   if (!elements.detailsOverlay.hidden) {
     closeDetails();

@@ -55,6 +55,15 @@
       </div>
     </header>
 
+    <nav class="view-switcher" aria-label="التنقل بين أقسام الطلبات">
+      <button id="showRequestsView" class="view-switcher__button is-active" type="button">الطلبات الحالية</button>
+      <button id="showQuickRequestsView" class="view-switcher__button" type="button">
+        طلبات جديدة
+        <span id="quickRequestsCount" class="view-switcher__count">0</span>
+      </button>
+    </nav>
+
+    <div id="requestsView">
     <section class="summary" aria-label="ملخص الطلبات">
       <article class="summary-card">
         <span>كل الطلبات</span>
@@ -115,6 +124,26 @@
         <p>جرّب تغيير الفلاتر أو عبارة البحث.</p>
       </section>
     </main>
+    </div>
+
+    <section id="quickRequestsView" class="quick-view" hidden aria-labelledby="quickRequestsHeading">
+      <header class="quick-view__header">
+        <div>
+          <p class="quick-view__eyebrow">تسجيل سريع الآن واستكمال البيانات لاحقًا</p>
+          <h2 id="quickRequestsHeading">طلبات جديدة</h2>
+          <p>يكفي مكان الوجود وصورة واحدة. الاسم والتفاصيل والجهة الطالبة يمكن إضافتها لاحقًا.</p>
+        </div>
+        <button id="openQuickAddButton" class="primary-button quick-add-button" type="button">＋ إضافة طلب جديد</button>
+      </header>
+
+      <section id="quickRequestList" class="quick-request-grid" aria-live="polite"></section>
+
+      <section id="quickEmptyState" class="empty-state" hidden>
+        <div class="empty-state__icon">📷</div>
+        <h3>لا توجد طلبات جديدة بعد</h3>
+        <p>أضف أول طلب بصورة ومكان الوجود، وأكمل باقي البيانات عندما تتفرغ.</p>
+      </section>
+    </section>
   </div>
 
   <button
@@ -122,8 +151,8 @@
     class="fab"
     hidden
     type="button"
-    aria-label="إضافة طلب جديد"
-    title="إضافة طلب جديد"
+    aria-label="إضافة طلب مشتريات"
+    title="إضافة طلب مشتريات"
   >
     <span aria-hidden="true">＋</span>
   </button>
@@ -260,6 +289,22 @@
     </section>
   </div>
 
+  <div id="quickDetailsOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-quick-details></div>
+
+    <section class="sheet quick-details-sheet" role="dialog" aria-modal="true" aria-labelledby="quickDetailsTitle">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">تفاصيل الطلب الجديد</p>
+          <h2 id="quickDetailsTitle">—</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-quick-details aria-label="إغلاق تفاصيل الطلب الجديد">✕</button>
+      </header>
+      <div id="quickDetailsContent" class="sheet__content"></div>
+    </section>
+  </div>
+
   <div id="addOverlay" class="overlay" hidden>
     <div class="overlay__backdrop" data-close-add></div>
 
@@ -274,7 +319,7 @@
       <header class="sheet__header">
         <div>
           <p class="sheet__eyebrow">إضافة محفوظة في قاعدة البيانات المشتركة</p>
-          <h2 id="addTitle">طلب جديد</h2>
+          <h2 id="addTitle">طلب مشتريات جديد</h2>
         </div>
 
         <button
@@ -358,15 +403,83 @@
           <span>تمت تصفية هذا الطلب</span>
         </label>
 
-        <label id="requestAttachmentsField">
-          <span>صور أو ملفات PDF للطلب / أمر التشغيل</span>
-          <input name="attachments" id="attachmentsInput" type="file" accept="image/*,application/pdf" multiple>
+        <div id="requestAttachmentsField" class="file-source-field">
+          <span class="file-source-field__title">صور أو ملفات PDF للطلب / أمر التشغيل</span>
+          <div class="file-source-actions">
+            <label class="file-source-button">
+              <span>🖼 اختيار صور / ملفات</span>
+              <input name="attachments" id="attachmentsInput" type="file" accept="image/*,application/pdf" multiple>
+            </label>
+            <label class="file-source-button file-source-button--camera">
+              <span>📷 فتح الكاميرا</span>
+              <input id="attachmentsCameraInput" type="file" accept="image/*" capture="environment">
+            </label>
+          </div>
           <small id="attachmentsPreviewText">
             ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.
           </small>
-        </label>
+        </div>
 
         <button class="primary-button" type="submit">إضافة الطلب</button>
+      </form>
+    </section>
+  </div>
+
+  <div id="quickAddOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-quick-add></div>
+
+    <section class="sheet add-sheet quick-add-sheet" role="dialog" aria-modal="true" aria-labelledby="quickAddTitle">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">حفظ سريع في نافذة مستقلة</p>
+          <h2 id="quickAddTitle">إضافة طلب جديد</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-quick-add aria-label="إغلاق نموذج الطلب الجديد">✕</button>
+      </header>
+
+      <form id="quickAddForm" class="request-form quick-request-form">
+        <label>
+          <span>مكان الوجود *</span>
+          <input name="location" type="text" maxlength="180" required placeholder="مثال: مستودع حلب - الرف 3 أو موقع المشروع">
+        </label>
+
+        <div class="file-source-field is-required">
+          <span class="file-source-field__title">صورة الطلب *</span>
+          <div class="file-source-actions">
+            <label class="file-source-button">
+              <span>🖼 اختيار صورة / صور</span>
+              <input id="quickImagesInput" type="file" accept="image/*" multiple>
+            </label>
+            <label class="file-source-button file-source-button--camera">
+              <span>📷 فتح الكاميرا</span>
+              <input id="quickCameraInput" type="file" accept="image/*" capture="environment">
+            </label>
+          </div>
+          <small id="quickImagesPreviewText">يجب إضافة صورة واحدة على الأقل. يمكنك التقاط صورة أو اختيار عدة صور.</small>
+        </div>
+
+        <label>
+          <span>الاسم <small class="optional-label">اختياري</small></span>
+          <input name="title" type="text" maxlength="120" placeholder="يمكن تركه فارغًا الآن">
+        </label>
+
+        <label>
+          <span>الجهة الطالبة <small class="optional-label">اختياري</small></span>
+          <select name="department">
+            <option value="">غير محددة الآن</option>
+            <option value="operations">العمليات</option>
+            <option value="engineering">الهندسية</option>
+            <option value="technical">الفنية</option>
+          </select>
+        </label>
+
+        <label>
+          <span>التفاصيل / البنود <small class="optional-label">اختياري</small></span>
+          <textarea name="details" rows="6" maxlength="3000" placeholder="اكتب البنود أو أي تفاصيل عند توفرها"></textarea>
+        </label>
+
+        <button class="primary-button" type="submit">حفظ الطلب الجديد</button>
       </form>
     </section>
   </div>
