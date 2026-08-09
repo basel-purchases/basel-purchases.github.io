@@ -48,6 +48,9 @@ const state = {
   draftFilters: { ...defaultFilters },
   deletionLog: [],
   activeDetailsId: null,
+  detailsEditMode: false,
+  editingItemId: null,
+  addingItemRequestId: null,
   noteFormOpen: false,
   editingNoteId: null,
   lastCardTap: { id: null, time: 0 },
@@ -130,7 +133,9 @@ function normalizePurchaseItem(item, requestId, index) {
     specifications: String(item?.specifications || item?.specs || ""),
     origin: String(item?.origin || ""),
     quantity: normalizeOptionalNumber(item?.quantity),
+    unit: String(item?.unit || ""),
     lastEntryPrice: normalizeOptionalNumber(item?.lastEntryPrice ?? item?.last_entry_price),
+    lastEntryDate: item?.lastEntryDate ?? item?.last_entry_date ?? null,
     unitPrice: normalizeOptionalNumber(item?.unitPrice ?? item?.unit_price),
     totalPrice: normalizeOptionalNumber(item?.totalPrice ?? item?.total_price ?? item?.price),
     price: normalizeOptionalNumber(item?.totalPrice ?? item?.total_price ?? item?.price),
@@ -158,6 +163,7 @@ function dbItemToApp(item) {
     quantity: normalizeOptionalNumber(item.quantity),
     unit: String(item.unit || ""),
     lastEntryPrice: normalizeOptionalNumber(item.last_entry_price),
+    lastEntryDate: item.last_entry_date || null,
     unitPrice: normalizeOptionalNumber(item.unit_price),
     totalPrice: normalizeOptionalNumber(item.total_price ?? item.price),
     price: normalizeOptionalNumber(item.total_price ?? item.price),
@@ -205,6 +211,7 @@ function dbRequestToApp(row) {
     initialPrice: normalizeOptionalNumber(row.final_price ?? row.initial_price),
     currency: row.currency || "SYP",
     createdAt: row.request_date || row.created_at,
+    updatedAt: row.updated_at || null,
     created: Boolean(row.is_uploaded),
     quotes: Boolean(row.has_quotes),
     purchased: Boolean(row.is_purchased),
@@ -373,7 +380,7 @@ async function fetchRequests() {
       created_at, updated_at,
       purchase_items (
         id, item_name, specifications, origin, quantity, unit, price,
-        last_entry_price, unit_price, total_price, available, action_if_unavailable, signal, sort_order, created_at
+        last_entry_price, last_entry_date, unit_price, total_price, available, action_if_unavailable, signal, sort_order, created_at, updated_at
       ),
       notes (
         id, body, author_id, author_name, created_at, updated_at
@@ -613,6 +620,24 @@ function formatDate(dateValue, includeTime = false) {
   }
 }
 
+function formatDateInput(dateValue) {
+  if (!dateValue) return "";
+  const text = String(dateValue);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getRequestStatusValue(request) {
+  if (request?.purchased) return "purchased";
+  if (request?.quotes) return "quotes";
+  return "new";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -667,7 +692,9 @@ function getFilteredRequests() {
           item.specifications,
           item.origin,
           item.quantity,
+          item.unit,
           item.lastEntryPrice,
+          item.lastEntryDate,
           item.unitPrice,
           item.totalPrice,
           item.action
@@ -1067,8 +1094,211 @@ function purchaseItemSignalDot(item) {
   return "";
 }
 
+function requestDepartmentOptions(selected) {
+  return [
+    ["operations", "العمليات"],
+    ["engineering", "الهندسية"],
+    ["technical", "الفنية"]
+  ].map(([value, label]) =>
+    `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`
+  ).join("");
+}
+
+function requestEditFormMarkup(request) {
+  const isMaterials = request.type === "materials";
+  const status = getRequestStatusValue(request);
+  const materialTotal = isMaterials
+    ? (request.items || []).reduce((sum, item) => sum + Number(item.totalPrice || 0), 0)
+    : null;
+  const finalPrice = isMaterials ? materialTotal : request.finalPrice;
+
+  return `
+    <form class="request-details-edit-form" data-edit-request-form="${escapeHtml(request.id)}">
+      <div class="request-details-edit-form__heading">
+        <div>
+          <strong>تعديل بيانات الطلب</strong>
+          <small>يمكن تعديل بيانات الطلب والبنود من نفس شاشة التفاصيل.</small>
+        </div>
+        <span class="edit-mode-badge">وضع التعديل</span>
+      </div>
+
+      <label class="is-wide">
+        <span>النص المختصر</span>
+        <input name="title" type="text" maxlength="90" required value="${escapeHtml(request.title)}">
+      </label>
+
+      <div class="request-details-edit-form__grid">
+        <label>
+          <span>الجهة الطالبة</span>
+          <select name="department" required>${requestDepartmentOptions(request.department)}</select>
+        </label>
+
+        <label>
+          <span>نوع الطلب</span>
+          <input type="text" value="${escapeHtml(getTypeLabel(request.type))}" disabled>
+          <small>نوع الطلب ثابت لحماية البنود والمرفقات المرتبطة به.</small>
+        </label>
+
+        <label>
+          <span>تاريخ رفع الطلب</span>
+          <input name="requestDate" type="date" required value="${escapeHtml(formatDateInput(request.createdAt))}">
+        </label>
+
+        <label>
+          <span>الحالة</span>
+          <select name="status">
+            <option value="new" ${status === "new" ? "selected" : ""}>تم رفع الطلب</option>
+            <option value="quotes" ${status === "quotes" ? "selected" : ""}>تم إحضار عروض أسعار</option>
+            <option value="purchased" ${status === "purchased" ? "selected" : ""}>تم الشراء</option>
+          </select>
+        </label>
+
+        <label>
+          <span>عدد عروض الأسعار</span>
+          <input name="offersCount" type="number" min="0" step="1" value="${Number(request.offersCount || 0)}">
+        </label>
+
+        <label>
+          <span>المورد</span>
+          <input name="supplier" type="text" maxlength="160" value="${escapeHtml(request.supplier || "")}" placeholder="اسم المورد">
+        </label>
+
+        <label class="is-wide">
+          <span>السعر النهائي (ل.س)</span>
+          <input name="finalPrice" type="number" min="0" step="1" ${isMaterials ? "readonly" : ""} value="${finalPrice === null || finalPrice === undefined ? "" : escapeHtml(finalPrice)}">
+          ${isMaterials ? '<small>يحسب تلقائيًا من مجموع أسعار البنود.</small>' : ""}
+        </label>
+      </div>
+
+      ${request.type === "work-order" ? `
+        <label class="is-wide">
+          <span>تفاصيل أمر التشغيل</span>
+          <textarea name="description" rows="5" maxlength="2000" required>${escapeHtml(request.description || "")}</textarea>
+        </label>
+      ` : ""}
+
+      <label class="request-edit-check-row">
+        <input name="settled" type="checkbox" ${request.settled ? "checked" : ""}>
+        <span>تمت تصفية هذا الطلب</span>
+      </label>
+
+      <div class="request-edit-actions">
+        <button class="primary-button" type="submit">حفظ التعديلات</button>
+        <button class="secondary-button" type="button" data-cancel-request-edit>إلغاء</button>
+      </div>
+    </form>
+  `;
+}
+
+function purchaseItemEditFormMarkup(request, item, index, isNew = false) {
+  const current = item || {
+    name: "",
+    specifications: "",
+    origin: "",
+    quantity: null,
+    unit: "",
+    lastEntryPrice: null,
+    lastEntryDate: null,
+    unitPrice: null,
+    totalPrice: null,
+    available: true,
+    action: "",
+    signal: "none"
+  };
+  const formAttribute = isNew
+    ? `data-add-purchase-item-form="${escapeHtml(request.id)}"`
+    : `data-edit-purchase-item-form="${escapeHtml(request.id)}" data-item-id="${escapeHtml(current.id)}"`;
+
+  return `
+    <form class="purchase-item-edit-form" ${formAttribute}>
+      <div class="purchase-item-edit-form__heading">
+        <strong>${isNew ? "إضافة بند جديد" : `تعديل البند ${(index + 1).toLocaleString("ar-SY")}`}</strong>
+        <small>${isNew ? "سيضاف البند إلى الطلب الحالي مباشرة." : "عدّل أي قيمة ثم اضغط حفظ."}</small>
+      </div>
+
+      <label class="is-wide">
+        <span>اسم البند</span>
+        <input data-detail-item-field="name" name="name" type="text" maxlength="120" required value="${escapeHtml(current.name || "")}">
+      </label>
+
+      <label class="is-wide">
+        <span>المواصفات</span>
+        <textarea data-detail-item-field="specifications" name="specifications" rows="3" maxlength="700">${escapeHtml(current.specifications || "")}</textarea>
+      </label>
+
+      <div class="purchase-item-edit-form__grid">
+        <label>
+          <span>المنشأ</span>
+          <input data-detail-item-field="origin" name="origin" type="text" maxlength="80" value="${escapeHtml(current.origin || "")}">
+        </label>
+
+        <label>
+          <span>العدد / الكمية</span>
+          <input data-detail-item-field="quantity" name="quantity" type="number" min="0" step="any" required value="${current.quantity === null || current.quantity === undefined ? "" : escapeHtml(current.quantity)}">
+        </label>
+
+        <label>
+          <span>الوحدة</span>
+          <input data-detail-item-field="unit" name="unit" type="text" maxlength="40" value="${escapeHtml(current.unit || "")}" placeholder="قطعة / متر / كغ">
+        </label>
+
+        <label>
+          <span>سعر آخر إدخال (ل.س)</span>
+          <input data-detail-item-field="lastEntryPrice" name="lastEntryPrice" type="number" min="0" step="1" value="${current.lastEntryPrice === null || current.lastEntryPrice === undefined ? "" : escapeHtml(current.lastEntryPrice)}" placeholder="هذا أو السعر الفردي">
+        </label>
+
+        <label>
+          <span>تاريخ آخر إدخال</span>
+          <input data-detail-item-field="lastEntryDate" name="lastEntryDate" type="date" value="${escapeHtml(formatDateInput(current.lastEntryDate))}">
+        </label>
+
+        <label>
+          <span>السعر الفردي (ل.س)</span>
+          <input data-detail-item-field="unitPrice" name="unitPrice" type="number" min="0" step="1" value="${current.unitPrice === null || current.unitPrice === undefined ? "" : escapeHtml(current.unitPrice)}" placeholder="هذا أو سعر آخر إدخال">
+        </label>
+
+        <label class="is-wide calculated-total-field">
+          <span>السعر الإجمالي (ل.س)</span>
+          <input data-detail-item-field="totalPrice" name="totalPrice" type="number" min="0" step="1" readonly value="${current.totalPrice === null || current.totalPrice === undefined ? "" : escapeHtml(current.totalPrice)}">
+        </label>
+      </div>
+
+      <label class="request-edit-check-row">
+        <input data-detail-item-available name="available" type="checkbox" ${current.available !== false ? "checked" : ""}>
+        <span>البند موجود</span>
+      </label>
+
+      <label class="is-wide">
+        <span>الإجراء المتبع عند عدم توفر البند</span>
+        <textarea data-detail-item-field="action" name="action" rows="3" maxlength="700" placeholder="يصبح مطلوبًا إذا كان البند غير موجود">${escapeHtml(current.action || "")}</textarea>
+      </label>
+
+      <label>
+        <span>إشارة البند</span>
+        <select data-detail-item-field="signal" name="signal">
+          <option value="none" ${current.signal === "none" ? "selected" : ""}>بدون إشارة</option>
+          <option value="green" ${current.signal === "green" ? "selected" : ""}>دائرة خضراء</option>
+          <option value="red" ${current.signal === "red" ? "selected" : ""}>دائرة حمراء</option>
+        </select>
+      </label>
+
+      <label class="is-wide purchase-item-edit-images">
+        <span>${isNew ? "صور البند" : "إضافة صور جديدة للبند"}</span>
+        <input name="itemImages" type="file" accept="image/*" multiple>
+        <small>يمكن اختيار عدة صور دفعة واحدة، بحد أقصى ${MAX_ATTACHMENTS} صور في كل مرة.</small>
+      </label>
+
+      <div class="request-edit-actions is-wide">
+        <button class="primary-button" type="submit">${isNew ? "إضافة البند" : "حفظ البند"}</button>
+        <button class="secondary-button" type="button" ${isNew ? "data-cancel-add-purchase-item" : "data-cancel-item-edit"}>إلغاء</button>
+      </div>
+    </form>
+  `;
+}
+
 function purchaseItemMarkup(request, item, index) {
   const isMissing = item.available === false;
+  const isEditing = state.editingItemId === item.id;
   const compactPriceLabel = item.lastEntryPrice !== null && item.lastEntryPrice !== undefined ? "آخر إدخال" : "السعر الفردي";
   const compactPriceValue = item.lastEntryPrice ?? item.unitPrice;
   const itemAttachments = (request.attachments || []).filter(
@@ -1082,8 +1312,43 @@ function purchaseItemMarkup(request, item, index) {
         </a>`).join("")}</div>`
     : '<p class="purchase-item__no-images">لا توجد صور لهذا البند.</p>';
 
+  const readOnlyDetails = `
+    <div class="purchase-item__specs">
+      <span>المواصفات</span>
+      <p>${escapeHtml(item.specifications || "غير محددة")}</p>
+    </div>
+
+    <div class="purchase-item__grid">
+      <div><span>المنشأ</span><strong>${escapeHtml(item.origin || "غير محدد")}</strong></div>
+      <div><span>العدد / الكمية</span><strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong></div>
+      <div><span>الوحدة</span><strong>${escapeHtml(item.unit || "غير محددة")}</strong></div>
+      <div><span>سعر آخر إدخال</span><strong>${escapeHtml(formatItemPrice(item.lastEntryPrice))}</strong></div>
+      <div><span>تاريخ آخر إدخال</span><strong>${escapeHtml(formatDate(item.lastEntryDate))}</strong></div>
+      <div><span>السعر الفردي</span><strong>${escapeHtml(formatItemPrice(item.unitPrice))}</strong></div>
+      <div class="is-total"><span>السعر الإجمالي</span><strong>${escapeHtml(formatItemPrice(item.totalPrice))}</strong></div>
+    </div>
+
+    <div class="purchase-item__controls">
+      <button class="edit-item-button" type="button" data-edit-purchase-item="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">✎ تعديل كل بيانات البند</button>
+      <label class="item-availability-control">
+        <input type="checkbox" data-item-available="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" ${item.available ? "checked" : ""}>
+        <span>${item.available ? "البند موجود" : "البند غير موجود"}</span>
+      </label>
+      <div class="item-signal-picker" aria-label="إشارة البند">
+        <span>إشارة البند</span>
+        <div>
+          <button class="signal-choice ${item.signal === "none" ? "is-selected" : ""}" type="button" data-item-signal="none" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">بدون</button>
+          <button class="signal-choice is-green ${item.signal === "green" ? "is-selected" : ""}" type="button" data-item-signal="green" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-green"></span> خضراء</button>
+          <button class="signal-choice is-red ${item.signal === "red" ? "is-selected" : ""}" type="button" data-item-signal="red" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-red"></span> حمراء</button>
+        </div>
+      </div>
+    </div>
+
+    ${isMissing ? `<label class="item-action-field"><span>الإجراء المتبع لهذا البند</span><textarea rows="3" maxlength="700" data-item-action="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" placeholder="اكتب الإجراء المتبع بسبب عدم توفر البند...">${escapeHtml(item.action || "")}</textarea></label>` : ""}
+  `;
+
   return `
-    <article class="purchase-item ${isMissing ? "is-missing" : ""}" data-purchase-item="${escapeHtml(item.id)}">
+    <article class="purchase-item ${isMissing ? "is-missing" : ""} ${isEditing ? "is-expanded" : ""}" data-purchase-item="${escapeHtml(item.id)}">
       <div class="purchase-item__compact" title="انقر مرتين لفتح التفاصيل">
         <div class="purchase-item__title-row">
           <h3>${purchaseItemSignalDot(item)}${escapeHtml(item.name || `البند ${index + 1}`)}</h3>
@@ -1093,54 +1358,29 @@ function purchaseItemMarkup(request, item, index) {
           <div class="purchase-item__summary-meta">
             <span>${escapeHtml(compactPriceLabel)}: <strong>${escapeHtml(formatItemPrice(compactPriceValue))}</strong></span>
             <span>الكمية: <strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong></span>
+            ${item.lastEntryDate ? `<span>تاريخ آخر إدخال: <strong>${escapeHtml(formatDate(item.lastEntryDate))}</strong></span>` : ""}
           </div>
           <div class="purchase-item__summary-total">
             <span>السعر الإجمالي</span>
             <strong>${escapeHtml(formatItemPrice(item.totalPrice))}</strong>
           </div>
         </div>
-        <small class="purchase-item__expand-hint">نقرتان لعرض باقي التفاصيل</small>
+        <small class="purchase-item__expand-hint">${isEditing ? "وضع تعديل البند" : "نقرتان لعرض باقي التفاصيل"}</small>
       </div>
 
-      <div class="purchase-item__expanded" hidden>
-        <div class="purchase-item__specs">
-          <span>المواصفات</span>
-          <p>${escapeHtml(item.specifications || "غير محددة")}</p>
-        </div>
-
-        <div class="purchase-item__grid">
-          <div><span>المنشأ</span><strong>${escapeHtml(item.origin || "غير محدد")}</strong></div>
-          <div><span>العدد / الكمية</span><strong>${escapeHtml(formatItemQuantity(item.quantity))}</strong></div>
-          <div><span>سعر آخر إدخال</span><strong>${escapeHtml(formatItemPrice(item.lastEntryPrice))}</strong></div>
-          <div><span>السعر الفردي</span><strong>${escapeHtml(formatItemPrice(item.unitPrice))}</strong></div>
-          <div class="is-total"><span>السعر الإجمالي</span><strong>${escapeHtml(formatItemPrice(item.totalPrice))}</strong></div>
-        </div>
-
-        <div class="purchase-item__controls">
-          <label class="item-availability-control">
-            <input type="checkbox" data-item-available="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" ${item.available ? "checked" : ""}>
-            <span>${item.available ? "البند موجود" : "البند غير موجود"}</span>
-          </label>
-          <div class="item-signal-picker" aria-label="إشارة البند">
-            <span>إشارة البند</span>
-            <div>
-              <button class="signal-choice ${item.signal === "none" ? "is-selected" : ""}" type="button" data-item-signal="none" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">بدون</button>
-              <button class="signal-choice is-green ${item.signal === "green" ? "is-selected" : ""}" type="button" data-item-signal="green" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-green"></span> خضراء</button>
-              <button class="signal-choice is-red ${item.signal === "red" ? "is-selected" : ""}" type="button" data-item-signal="red" data-request-id="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}"><span class="signal-dot is-red"></span> حمراء</button>
-            </div>
-          </div>
-        </div>
-
-        ${isMissing ? `<label class="item-action-field"><span>الإجراء المتبع لهذا البند</span><textarea rows="3" maxlength="700" data-item-action="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}" placeholder="اكتب الإجراء المتبع بسبب عدم توفر البند...">${escapeHtml(item.action || "")}</textarea></label>` : ""}
+      <div class="purchase-item__expanded" ${isEditing ? "" : "hidden"}>
+        ${isEditing ? purchaseItemEditFormMarkup(request, item, index, false) : readOnlyDetails}
 
         <div class="purchase-item__images-section">
           <span>صور البند (${itemAttachments.length.toLocaleString("ar-SY")})</span>
           ${itemImagesMarkup}
-          <label class="purchase-item__add-images">
-            <span>إضافة صور أخرى</span>
-            <input type="file" accept="image/*" multiple data-add-item-images-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
-            <small>يمكن اختيار عدة صور دفعة واحدة.</small>
-          </label>
+          ${isEditing ? "" : `
+            <label class="purchase-item__add-images">
+              <span>إضافة صور أخرى</span>
+              <input type="file" accept="image/*" multiple data-add-item-images-request="${escapeHtml(request.id)}" data-item-id="${escapeHtml(item.id)}">
+              <small>يمكن اختيار عدة صور دفعة واحدة.</small>
+            </label>
+          `}
         </div>
       </div>
     </article>
@@ -1149,6 +1389,7 @@ function purchaseItemMarkup(request, item, index) {
 
 function materialsItemsMarkup(request) {
   const items = request.items || [];
+  const isAdding = state.addingItemRequestId === request.id;
 
   return `
     <section class="purchase-items-detail">
@@ -1157,20 +1398,72 @@ function materialsItemsMarkup(request) {
           <span>بنود طلب الشراء</span>
           <strong>${items.length.toLocaleString("ar-SY")} بند</strong>
         </div>
-        ${
-          getRequestIssueCount(request) > 0
-            ? `<span class="items-problem-count"><span class="signal-dot is-red"></span>${getRequestIssueCount(request).toLocaleString("ar-SY")} بها مشكلة</span>`
-            : ""
-        }
+        <div class="purchase-items-detail__actions">
+          ${
+            getRequestIssueCount(request) > 0
+              ? `<span class="items-problem-count"><span class="signal-dot is-red"></span>${getRequestIssueCount(request).toLocaleString("ar-SY")} بها مشكلة</span>`
+              : ""
+          }
+          <button class="add-existing-item-button" type="button" data-open-add-purchase-item="${escapeHtml(request.id)}">＋ إضافة بند</button>
+        </div>
       </header>
+
+      ${isAdding ? `
+        <article class="purchase-item purchase-item--new is-expanded">
+          <div class="purchase-item__expanded">
+            ${purchaseItemEditFormMarkup(request, null, items.length, true)}
+          </div>
+        </article>
+      ` : ""}
 
       <div class="purchase-items-list">
         ${
           items.length > 0
             ? items.map((item, index) => purchaseItemMarkup(request, item, index)).join("")
-            : '<p class="purchase-items-empty">لا توجد بنود في هذا الطلب.</p>'
+            : '<p class="purchase-items-empty">لا توجد بنود في هذا الطلب. اضغط «إضافة بند» لإضافة أول بند.</p>'
         }
       </div>
+    </section>
+  `;
+}
+
+function requestAttachmentsMarkup(request) {
+  const requestLevelAttachments = (request.attachments || []).filter((attachment) => !attachment.itemId);
+  const attachmentsMarkup = requestLevelAttachments.length
+    ? requestLevelAttachments.map((attachment) => {
+        const isImage = String(attachment.mimeType || "").startsWith("image/");
+        if (isImage) {
+          return `
+            <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+              <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
+              <p>${escapeHtml(attachment.name)}</p>
+            </a>
+          `;
+        }
+        return `
+          <a class="attachment attachment--document" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
+            <span class="attachment__file-icon" aria-hidden="true">📄</span>
+            <p>${escapeHtml(attachment.name)}</p>
+            <small>فتح الملف</small>
+          </a>
+        `;
+      }).join("")
+    : '<p class="request-attachments-empty">لا توجد صور أو مرفقات على مستوى الطلب حتى الآن.</p>';
+
+  return `
+    <section class="request-attachments-section">
+      <div class="request-attachments-section__heading">
+        <div>
+          <h3>صور ومرفقات الطلب</h3>
+          <small>${requestLevelAttachments.length.toLocaleString("ar-SY")} مرفق</small>
+        </div>
+      </div>
+      ${requestLevelAttachments.length ? `<div class="attachments">${attachmentsMarkup}</div>` : attachmentsMarkup}
+      <label class="request-add-images">
+        <span>＋ إضافة صور للطلب / أمر التشغيل</span>
+        <input type="file" accept="image/*" multiple data-add-request-images="${escapeHtml(request.id)}">
+        <small>يمكن إضافة عدة صور في كل مرة بدون حذف الصور السابقة. الحد الأقصى ${MAX_ATTACHMENTS} صور لكل دفعة.</small>
+      </label>
     </section>
   `;
 }
@@ -1182,35 +1475,10 @@ function renderDetails(requestId) {
 
   elements.detailsTitle.textContent = request.title;
 
-  const requestLevelAttachments = (request.attachments || []).filter((attachment) => !attachment.itemId);
-  const attachmentsMarkup =
-    requestLevelAttachments.length > 0
-      ? requestLevelAttachments
-          .map((attachment) => {
-            const isImage = String(attachment.mimeType || "").startsWith("image/");
-            if (isImage) {
-              return `
-                <a class="attachment" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
-                  <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name)}">
-                  <p>${escapeHtml(attachment.name)}</p>
-                </a>
-              `;
-            }
-
-            return `
-              <a class="attachment attachment--document" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">
-                <span class="attachment__file-icon" aria-hidden="true">📄</span>
-                <p>${escapeHtml(attachment.name)}</p>
-                <small>فتح الملف</small>
-              </a>
-            `;
-          })
-          .join("")
-      : "";
-
-  const primaryDetailsMarkup =
-    request.type === "materials"
-      ? materialsItemsMarkup(request)
+  const primaryDetailsMarkup = request.type === "materials"
+    ? materialsItemsMarkup(request)
+    : state.detailsEditMode
+      ? ""
       : `
         <article class="detail-description">
           <span>تفاصيل أمر التشغيل</span>
@@ -1218,9 +1486,7 @@ function renderDetails(requestId) {
         </article>
       `;
 
-  elements.detailsContent.innerHTML = `
-    ${primaryDetailsMarkup}
-
+  const readOnlyRequestMarkup = `
     <div class="detail-status">
       ${progressMarkup(request)}
     </div>
@@ -1268,45 +1534,20 @@ function renderDetails(requestId) {
     </div>
 
     <div class="detail-actions">
-      <button
-        class="detail-action-button"
-        type="button"
-        data-toggle-settlement="${escapeHtml(request.id)}"
-      >
-        ${
-          request.settled
-            ? "إلغاء علامة تمت التصفية"
-            : "تحديد الطلب بأنه تمت تصفيته"
-        }
+      <button class="detail-edit-button" type="button" data-open-request-edit="${escapeHtml(request.id)}">✎ تعديل بيانات الطلب</button>
+      <button class="detail-action-button" type="button" data-toggle-settlement="${escapeHtml(request.id)}">
+        ${request.settled ? "إلغاء علامة تمت التصفية" : "تحديد الطلب بأنه تمت تصفيته"}
       </button>
-
-      <button
-        class="detail-delete-button"
-        type="button"
-        data-delete-request="${escapeHtml(request.id)}"
-      >حذف الوثيقة</button>
+      <button class="detail-delete-button" type="button" data-delete-request="${escapeHtml(request.id)}">حذف الوثيقة</button>
       <small class="delete-password-note">الحذف يتطلب كلمة المرور ورسالة تأكيد، ويتم التحقق منها داخل قاعدة البيانات.</small>
     </div>
+  `;
 
+  elements.detailsContent.innerHTML = `
+    ${primaryDetailsMarkup}
+    ${state.detailsEditMode ? requestEditFormMarkup(request) : readOnlyRequestMarkup}
     ${notesMarkup(request)}
-
-    ${
-      requestLevelAttachments.length > 0
-        ? `
-          <h3 class="attachments-title">مرفقات الطلب</h3>
-          <div class="attachments">${attachmentsMarkup}</div>
-        `
-        : request.type === "work-order"
-          ? `
-            <div class="detail-grid attachments-empty-grid">
-              <article class="detail-box is-wide">
-                <span>مرفقات الطلب</span>
-                <p>لا توجد صور أو ملفات مرفقة لهذا الطلب.</p>
-              </article>
-            </div>
-          `
-          : ""
-    }
+    ${requestAttachmentsMarkup(request)}
   `;
 }
 
@@ -1316,6 +1557,9 @@ function openDetails(requestId) {
   if (!request) return;
 
   state.activeDetailsId = requestId;
+  state.detailsEditMode = false;
+  state.editingItemId = null;
+  state.addingItemRequestId = null;
   state.noteFormOpen = false;
   state.editingNoteId = null;
   renderDetails(requestId);
@@ -1324,6 +1568,9 @@ function openDetails(requestId) {
 
 function closeDetails() {
   state.activeDetailsId = null;
+  state.detailsEditMode = false;
+  state.editingItemId = null;
+  state.addingItemRequestId = null;
   state.noteFormOpen = false;
   state.editingNoteId = null;
   closeOverlay(elements.detailsOverlay);
@@ -1412,10 +1659,10 @@ function safeStorageFileName(name) {
   return `${crypto.randomUUID()}${ext || ""}`;
 }
 
-async function uploadSelectedAttachments(requestId) {
+async function uploadRequestAttachments(requestId, attachments) {
   const client = getSupabase();
 
-  for (const attachment of state.selectedAttachments) {
+  for (const attachment of attachments) {
     const storagePath = `${requestId}/${safeStorageFileName(attachment.file.name)}`;
     const { error: uploadError } = await client.storage
       .from(STORAGE_BUCKET)
@@ -1437,6 +1684,10 @@ async function uploadSelectedAttachments(requestId) {
 
     if (metadataError) throw metadataError;
   }
+}
+
+async function uploadSelectedAttachments(requestId) {
+  return uploadRequestAttachments(requestId, state.selectedAttachments);
 }
 
 
@@ -1509,8 +1760,18 @@ function materialItemEditorMarkup() {
         </label>
 
         <label>
+          <span>الوحدة</span>
+          <input data-item-field="unit" type="text" maxlength="40" placeholder="مثال: قطعة / متر / كغ">
+        </label>
+
+        <label>
           <span>سعر آخر إدخال (ل.س)</span>
           <input data-item-field="lastEntryPrice" type="number" min="0" step="1" placeholder="عبئ هذا أو السعر الفردي">
+        </label>
+
+        <label>
+          <span>تاريخ آخر إدخال</span>
+          <input data-item-field="lastEntryDate" type="date">
         </label>
 
         <label>
@@ -1594,7 +1855,7 @@ function syncRequestTypeFields() {
     finalPrice.readOnly = isMaterials;
     finalPrice.placeholder = isMaterials ? "يحسب تلقائيًا من مجموع البنود" : "اختياري";
   }
-  if (elements.requestAttachmentsField) elements.requestAttachmentsField.hidden = isMaterials;
+  if (elements.requestAttachmentsField) elements.requestAttachmentsField.hidden = false;
 
   if (isMaterials && elements.materialItemsEditor.children.length === 0) {
     addMaterialItemEditor();
@@ -1669,7 +1930,9 @@ function collectMaterialItemsFromForm(requestId) {
         specifications: getField("specifications").value.trim(),
         origin: getField("origin").value.trim(),
         quantity: getField("quantity").value,
+        unit: getField("unit")?.value.trim() || "",
         lastEntryPrice,
+        lastEntryDate: getField("lastEntryDate")?.value || null,
         unitPrice,
         totalPrice: getField("totalPrice").value,
         price: getField("totalPrice").value,
@@ -1687,6 +1950,202 @@ function getRequestItem(requestId, itemId) {
   const request = state.requests.find((item) => item.id === requestId);
   const item = request?.items?.find((entry) => entry.id === itemId);
   return { request, item };
+}
+
+
+function collectDetailsItemForm(form, index = 0) {
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const specifications = String(formData.get("specifications") || "").trim();
+  const origin = String(formData.get("origin") || "").trim();
+  const unit = String(formData.get("unit") || "").trim();
+  const quantity = normalizeOptionalNumber(formData.get("quantity"));
+  const lastEntryPrice = normalizeOptionalNumber(formData.get("lastEntryPrice"));
+  const lastEntryDate = String(formData.get("lastEntryDate") || "").trim() || null;
+  const unitPrice = normalizeOptionalNumber(formData.get("unitPrice"));
+  const available = form.querySelector('[name="available"]')?.checked !== false;
+  const action = String(formData.get("action") || "").trim();
+  const signalValue = String(formData.get("signal") || "none");
+  const signal = ["none", "green", "red"].includes(signalValue) ? signalValue : "none";
+
+  if (!name) throw new Error("اكتب اسم البند.");
+  if (quantity === null) throw new Error("أدخل العدد / الكمية.");
+  if (lastEntryPrice !== null && unitPrice !== null) {
+    throw new Error("استخدم سعر آخر إدخال أو السعر الفردي فقط، وليس الحقلين معًا.");
+  }
+  if (lastEntryPrice === null && unitPrice === null) {
+    throw new Error("أدخل سعر آخر إدخال أو السعر الفردي.");
+  }
+  if (!available && !action) {
+    throw new Error("اكتب الإجراء المتبع لأن البند محدد بأنه غير موجود.");
+  }
+
+  const totalPrice = calculateItemTotal(quantity, lastEntryPrice, unitPrice);
+  if (totalPrice === null) throw new Error("تعذر حساب السعر الإجمالي للبند.");
+
+  return {
+    appItem: {
+      name,
+      specifications,
+      origin,
+      quantity,
+      unit,
+      lastEntryPrice,
+      lastEntryDate,
+      unitPrice,
+      totalPrice,
+      price: totalPrice,
+      available,
+      action,
+      signal,
+      sortOrder: index
+    },
+    payload: {
+      item_name: name,
+      specifications,
+      origin,
+      quantity,
+      unit,
+      price: totalPrice,
+      last_entry_price: lastEntryPrice,
+      last_entry_date: lastEntryDate,
+      unit_price: unitPrice,
+      total_price: totalPrice,
+      available,
+      action_if_unavailable: action,
+      signal,
+      sort_order: index
+    }
+  };
+}
+
+async function syncMaterialRequestFinalPrice(requestId) {
+  const client = getSupabase();
+  const { data, error } = await client
+    .from("purchase_items")
+    .select("total_price")
+    .eq("request_id", requestId);
+  if (error) throw error;
+
+  const total = (data || []).reduce((sum, row) => {
+    const value = normalizeOptionalNumber(row.total_price);
+    return sum + (value ?? 0);
+  }, 0);
+
+  const { error: updateError } = await client
+    .from("requests")
+    .update({ initial_price: total, final_price: total })
+    .eq("id", requestId);
+  if (updateError) throw updateError;
+  return total;
+}
+
+async function saveRequestDetails(form) {
+  const requestId = form.dataset.editRequestForm;
+  const request = state.requests.find((item) => item.id === requestId);
+  if (!request) return;
+
+  const formData = new FormData(form);
+  const title = String(formData.get("title") || "").trim();
+  const department = String(formData.get("department") || "");
+  const requestDate = String(formData.get("requestDate") || "").trim();
+  const status = String(formData.get("status") || "new");
+  const offersCount = Math.max(0, Number(formData.get("offersCount") || 0));
+  const supplier = String(formData.get("supplier") || "").trim();
+  const settled = form.querySelector('[name="settled"]')?.checked === true;
+  const description = request.type === "work-order"
+    ? String(formData.get("description") || "").trim()
+    : "";
+  const finalPriceValue = normalizeOptionalNumber(formData.get("finalPrice"));
+
+  if (!title) throw new Error("النص المختصر مطلوب.");
+  if (!["operations", "engineering", "technical"].includes(department)) {
+    throw new Error("اختر الجهة الطالبة.");
+  }
+  if (!requestDate) throw new Error("تاريخ رفع الطلب مطلوب.");
+  if (request.type === "work-order" && !description) {
+    throw new Error("تفاصيل أمر التشغيل مطلوبة.");
+  }
+
+  const hasQuotes = status === "quotes" || status === "purchased";
+  const isPurchased = status === "purchased";
+  const finalPrice = finalPriceValue;
+
+  const { error } = await getSupabase()
+    .from("requests")
+    .update({
+      title,
+      department_code: department,
+      description,
+      initial_price: finalPrice,
+      final_price: finalPrice,
+      request_date: requestDate,
+      has_quotes: hasQuotes,
+      is_purchased: isPurchased,
+      is_settled: settled,
+      offers_count: Number.isFinite(offersCount) ? Math.trunc(offersCount) : 0,
+      supplier
+    })
+    .eq("id", requestId);
+
+  if (error) throw error;
+  state.detailsEditMode = false;
+  await refreshAppData({ silent: true });
+  showToast("تم حفظ تعديلات الطلب");
+}
+
+async function savePurchaseItemDetails(form, isNew) {
+  const requestId = isNew ? form.dataset.addPurchaseItemForm : form.dataset.editPurchaseItemForm;
+  const request = state.requests.find((item) => item.id === requestId);
+  if (!request || request.type !== "materials") return;
+
+  const currentIndex = isNew
+    ? request.items.length
+    : Math.max(0, request.items.findIndex((item) => item.id === form.dataset.itemId));
+  const { payload } = collectDetailsItemForm(form, currentIndex);
+  const files = [...(form.querySelector('[name="itemImages"]')?.files || [])];
+  if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+    throw new Error("اختر ملفات صور فقط للبند.");
+  }
+
+  const client = getSupabase();
+  let itemId = form.dataset.itemId || null;
+
+  if (isNew) {
+    const { data, error } = await client
+      .from("purchase_items")
+      .insert({ request_id: requestId, ...payload })
+      .select("id")
+      .single();
+    if (error) throw error;
+    itemId = data.id;
+  } else {
+    const { error } = await client
+      .from("purchase_items")
+      .update(payload)
+      .eq("id", itemId)
+      .eq("request_id", requestId);
+    if (error) throw error;
+  }
+
+  let imageWarning = "";
+  if (files.length) {
+    try {
+      const prepared = await prepareSelectedAttachments(files);
+      await uploadItemAttachments(requestId, itemId, prepared);
+    } catch (error) {
+      console.error("تعذر رفع صور البند", error);
+      imageWarning = "تم حفظ بيانات البند، لكن تعذر رفع بعض الصور.";
+    }
+  }
+
+  await syncMaterialRequestFinalPrice(requestId);
+  state.editingItemId = null;
+  state.addingItemRequestId = null;
+  await refreshAppData({ silent: true });
+
+  if (imageWarning) window.alert(imageWarning);
+  else showToast(isNew ? "تمت إضافة البند" : "تم حفظ تعديلات البند");
 }
 
 async function deleteRequestWithPassword(requestId) {
@@ -1739,6 +2198,7 @@ async function addRequest(formData) {
     quantity: item.quantity,
     unit: item.unit || "",
     last_entry_price: item.lastEntryPrice,
+    last_entry_date: item.lastEntryDate || null,
     unit_price: item.unitPrice,
     total_price: item.totalPrice,
     price: item.totalPrice,
@@ -1788,12 +2248,12 @@ async function addRequest(formData) {
     }
   }
 
-  if (state.selectedAttachments.length && type !== "materials") {
+  if (state.selectedAttachments.length) {
     try {
       await uploadSelectedAttachments(requestId);
     } catch (error) {
       console.error("تعذر رفع بعض المرفقات", error);
-      attachmentWarning = "تم حفظ الطلب، لكن تعذر رفع بعض المرفقات. يمكنك إعادة إضافتها لاحقًا بعد تجهيز تعديل المرفقات.";
+      attachmentWarning = "تم حفظ الطلب، لكن تعذر رفع بعض مرفقات الطلب. يمكنك إعادة إضافتها من شاشة التفاصيل.";
     }
   }
 
@@ -2059,6 +2519,59 @@ elements.requestList.addEventListener("keydown", (event) => {
 });
 
 elements.detailsContent.addEventListener("click", async (event) => {
+  const openRequestEditButton = event.target.closest("[data-open-request-edit]");
+  if (openRequestEditButton) {
+    state.detailsEditMode = true;
+    state.editingItemId = null;
+    state.addingItemRequestId = null;
+    renderDetails(openRequestEditButton.dataset.openRequestEdit);
+    window.setTimeout(() => {
+      elements.detailsContent.querySelector('[data-edit-request-form] [name="title"]')?.focus();
+    }, 50);
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-request-edit]")) {
+    state.detailsEditMode = false;
+    renderDetails(state.activeDetailsId);
+    return;
+  }
+
+  const editItemButton = event.target.closest("[data-edit-purchase-item]");
+  if (editItemButton) {
+    state.detailsEditMode = false;
+    state.addingItemRequestId = null;
+    state.editingItemId = editItemButton.dataset.itemId;
+    renderDetails(editItemButton.dataset.editPurchaseItem);
+    window.setTimeout(() => {
+      elements.detailsContent.querySelector('[data-edit-purchase-item-form] [name="name"]')?.focus();
+    }, 50);
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-item-edit]")) {
+    state.editingItemId = null;
+    renderDetails(state.activeDetailsId);
+    return;
+  }
+
+  const addItemButton = event.target.closest("[data-open-add-purchase-item]");
+  if (addItemButton) {
+    state.detailsEditMode = false;
+    state.editingItemId = null;
+    state.addingItemRequestId = addItemButton.dataset.openAddPurchaseItem;
+    renderDetails(state.addingItemRequestId);
+    window.setTimeout(() => {
+      elements.detailsContent.querySelector('[data-add-purchase-item-form] [name="name"]')?.focus();
+    }, 50);
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-add-purchase-item]")) {
+    state.addingItemRequestId = null;
+    renderDetails(state.activeDetailsId);
+    return;
+  }
   const deleteRequestButton = event.target.closest("[data-delete-request]");
 
   if (deleteRequestButton) {
@@ -2186,6 +2699,25 @@ elements.detailsContent.addEventListener("click", async (event) => {
 });
 
 elements.detailsContent.addEventListener("change", async (event) => {
+  const requestImagesInput = event.target.closest("[data-add-request-images]");
+  if (requestImagesInput) {
+    const requestId = requestImagesInput.dataset.addRequestImages;
+    const files = [...requestImagesInput.files];
+    if (!files.length) return;
+    try {
+      if (files.some((file) => !String(file.type || "").startsWith("image/"))) {
+        throw new Error("اختر ملفات صور فقط للطلب.");
+      }
+      showToast("جارٍ تجهيز صور الطلب...");
+      const prepared = await prepareSelectedAttachments(files);
+      await uploadRequestAttachments(requestId, prepared);
+      await refreshAppData({ silent: true });
+      showToast(`تم رفع ${prepared.length} صورة للطلب`);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر رفع صور الطلب");
+    }
+    return;
+  }
   const itemImagesInput = event.target.closest("[data-add-item-images-request]");
   if (itemImagesInput) {
     const requestId = itemImagesInput.dataset.addItemImagesRequest;
@@ -2277,8 +2809,87 @@ elements.detailsContent.addEventListener("change", async (event) => {
   }
 });
 
+elements.detailsContent.addEventListener("input", (event) => {
+  const form = event.target.closest("[data-edit-purchase-item-form], [data-add-purchase-item-form]");
+  if (!form) return;
+
+  if (event.target.matches('[name="lastEntryPrice"]') && event.target.value !== "") {
+    const other = form.querySelector('[name="unitPrice"]');
+    if (other) other.value = "";
+  } else if (event.target.matches('[name="unitPrice"]') && event.target.value !== "") {
+    const other = form.querySelector('[name="lastEntryPrice"]');
+    if (other) other.value = "";
+  }
+
+  if (event.target.matches('[name="quantity"], [name="lastEntryPrice"], [name="unitPrice"]')) {
+    const quantity = form.querySelector('[name="quantity"]')?.value;
+    const last = form.querySelector('[name="lastEntryPrice"]')?.value;
+    const unit = form.querySelector('[name="unitPrice"]')?.value;
+    const total = calculateItemTotal(quantity, last, unit);
+    const totalInput = form.querySelector('[name="totalPrice"]');
+    if (totalInput) totalInput.value = total === null ? "" : String(total);
+  }
+});
+
 elements.detailsContent.addEventListener("submit", async (event) => {
   event.preventDefault();
+
+  const requestEditForm = event.target.closest("[data-edit-request-form]");
+  if (requestEditForm) {
+    const submitButton = requestEditForm.querySelector('button[type="submit"]');
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "جارٍ الحفظ...";
+    }
+    try {
+      await saveRequestDetails(requestEditForm);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر حفظ تعديلات الطلب");
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "حفظ التعديلات";
+      }
+    }
+    return;
+  }
+
+  const itemEditForm = event.target.closest("[data-edit-purchase-item-form]");
+  if (itemEditForm) {
+    const submitButton = itemEditForm.querySelector('button[type="submit"]');
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "جارٍ الحفظ...";
+    }
+    try {
+      await savePurchaseItemDetails(itemEditForm, false);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر حفظ تعديلات البند");
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "حفظ البند";
+      }
+    }
+    return;
+  }
+
+  const addItemForm = event.target.closest("[data-add-purchase-item-form]");
+  if (addItemForm) {
+    const submitButton = addItemForm.querySelector('button[type="submit"]');
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "جارٍ الإضافة...";
+    }
+    try {
+      await savePurchaseItemDetails(addItemForm, true);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر إضافة البند");
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "إضافة البند";
+      }
+    }
+    return;
+  }
 
   const addForm = event.target.closest("[data-add-note-form]");
   if (addForm) {
@@ -2336,7 +2947,7 @@ elements.detailsContent.addEventListener("submit", async (event) => {
 
 elements.detailsContent.addEventListener("dblclick", (event) => {
   const itemCard = event.target.closest("[data-purchase-item]");
-  if (!itemCard || event.target.closest("button, a, input, select, textarea")) return;
+  if (!itemCard || event.target.closest("button, a, input, select, textarea, form, label")) return;
   event.preventDefault();
   event.stopPropagation();
   const expanded = itemCard.querySelector(".purchase-item__expanded");
@@ -2460,7 +3071,7 @@ elements.attachmentsInput.addEventListener("change", async (event) => {
   if (fileCount === 0) {
     state.selectedAttachments = [];
     elements.attachmentsPreviewText.textContent =
-      "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.";
+      "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.";
     return;
   }
 
@@ -2504,7 +3115,7 @@ elements.addRequestForm.addEventListener("submit", async (event) => {
   syncRequestTypeFields();
   state.selectedAttachments = [];
   elements.attachmentsPreviewText.textContent =
-    "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات لكل طلب.";
+    "ترفع الملفات إلى التخزين المشترك الخاص. الحد الأقصى 8 ملفات في كل دفعة.";
   submitButton.disabled = false;
   submitButton.textContent = "إضافة الطلب";
 

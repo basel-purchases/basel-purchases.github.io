@@ -112,6 +112,7 @@ create table if not exists public.purchase_items (
   unit text not null default '',
   price numeric(18,2),
   last_entry_price numeric(18,2),
+  last_entry_date date,
   unit_price numeric(18,2),
   total_price numeric(18,2),
   available boolean not null default true,
@@ -677,6 +678,7 @@ begin
         unit text,
         price numeric,
         last_entry_price numeric,
+        last_entry_date date,
         unit_price numeric,
         total_price numeric,
         available boolean,
@@ -694,6 +696,7 @@ begin
         unit,
         price,
         last_entry_price,
+        last_entry_date,
         unit_price,
         total_price,
         available,
@@ -711,6 +714,7 @@ begin
           then v_item.quantity * coalesce(v_item.unit_price, v_item.last_entry_price)
           else coalesce(v_item.total_price, v_item.price) end,
         v_item.last_entry_price,
+        v_item.last_entry_date,
         v_item.unit_price,
         case when v_item.quantity is not null and coalesce(v_item.unit_price, v_item.last_entry_price) is not null
           then v_item.quantity * coalesce(v_item.unit_price, v_item.last_entry_price)

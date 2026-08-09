@@ -1868,3 +1868,296 @@ body.has-overlay {
 .purchase-item__add-images { display:grid; gap:5px; margin-top:9px; padding:8px; border:1px dashed rgba(56,189,248,.28); border-radius:10px; }
 .purchase-item__add-images > span { color:#bae6fd; font-size:10px; font-weight:800; }
 .purchase-item__add-images small { color:var(--muted); font-size:9px; }
+
+/* V7 - editable request details, item editing and request-level images */
+.detail-edit-button,
+.add-existing-item-button,
+.edit-item-button {
+  min-height: 42px;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 13px;
+  background: rgba(37, 99, 235, 0.15);
+  color: #dbeafe;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.detail-edit-button {
+  min-height: 48px;
+}
+
+.purchase-items-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.add-existing-item-button {
+  min-height: 36px;
+  padding: 0 10px;
+  border-color: rgba(56, 189, 248, 0.34);
+  background: rgba(14, 165, 233, 0.14);
+  color: #bae6fd;
+}
+
+.edit-item-button {
+  width: 100%;
+}
+
+.request-details-edit-form,
+.purchase-item-edit-form {
+  display: grid;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 18px;
+  background: rgba(8, 17, 31, 0.76);
+}
+
+.request-details-edit-form {
+  margin-bottom: 14px;
+}
+
+.request-details-edit-form__heading,
+.purchase-item-edit-form__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.request-details-edit-form__heading > div,
+.purchase-item-edit-form__heading {
+  min-width: 0;
+}
+
+.request-details-edit-form__heading strong,
+.purchase-item-edit-form__heading strong {
+  display: block;
+  color: #e0f2fe;
+  font-size: 14px;
+}
+
+.request-details-edit-form__heading small,
+.purchase-item-edit-form__heading small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.edit-mode-badge {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.14);
+  color: #bfdbfe;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.request-details-edit-form label,
+.purchase-item-edit-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.request-details-edit-form label > span,
+.purchase-item-edit-form label > span {
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.request-details-edit-form input,
+.request-details-edit-form select,
+.request-details-edit-form textarea,
+.purchase-item-edit-form input,
+.purchase-item-edit-form select,
+.purchase-item-edit-form textarea {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  outline: 0;
+  background: #0b1526;
+  color: var(--text);
+  padding: 10px;
+}
+
+.request-details-edit-form textarea,
+.purchase-item-edit-form textarea {
+  resize: vertical;
+}
+
+.request-details-edit-form small,
+.purchase-item-edit-form small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.request-details-edit-form input:disabled,
+.request-details-edit-form input[readonly],
+.purchase-item-edit-form input[readonly] {
+  opacity: 0.82;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.request-details-edit-form__grid,
+.purchase-item-edit-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.request-details-edit-form .is-wide,
+.purchase-item-edit-form .is-wide,
+.request-details-edit-form__grid .is-wide,
+.purchase-item-edit-form__grid .is-wide,
+.request-edit-actions.is-wide {
+  grid-column: 1 / -1;
+}
+
+.request-edit-check-row {
+  display: flex !important;
+  min-height: 44px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.18);
+}
+
+.request-edit-check-row input {
+  width: 20px !important;
+  min-height: 20px !important;
+  height: 20px;
+  flex: 0 0 auto;
+  padding: 0 !important;
+  accent-color: var(--purchased);
+}
+
+.request-edit-actions {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 8px;
+}
+
+.request-edit-actions button {
+  min-height: 43px;
+}
+
+.purchase-item--new {
+  margin-bottom: 10px;
+  border-style: dashed;
+  border-color: rgba(56, 189, 248, 0.36);
+}
+
+.purchase-item-edit-images {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.purchase-item__grid > div:nth-child(3) {
+  grid-column: auto;
+}
+
+.purchase-item__grid .is-total {
+  grid-column: 1 / -1;
+}
+
+.request-attachments-section {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(17, 29, 49, 0.72);
+}
+
+.request-attachments-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.request-attachments-section__heading h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 15px;
+}
+
+.request-attachments-section__heading small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.request-attachments-empty {
+  margin: 0 0 10px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 13px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.request-add-images {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed rgba(56, 189, 248, 0.32);
+  border-radius: 13px;
+  background: rgba(14, 165, 233, 0.06);
+}
+
+.request-add-images > span {
+  color: #bae6fd;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.request-add-images input {
+  width: 100%;
+  color: #cbd5e1;
+  font-size: 10px;
+}
+
+.request-add-images small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+@media (max-width: 520px) {
+  .request-details-edit-form__grid,
+  .purchase-item-edit-form__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .request-details-edit-form__grid .is-wide,
+  .purchase-item-edit-form__grid .is-wide {
+    grid-column: auto;
+  }
+
+  .purchase-items-detail__header {
+    align-items: flex-start;
+  }
+
+  .purchase-items-detail__actions {
+    max-width: 56%;
+  }
+}
