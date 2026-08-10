@@ -18,6 +18,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_SIDE = 1600;
 const JPEG_QUALITY = 0.78;
 const AUTO_REFRESH_MS = 30000;
+const QUICK_ONLY_ROLE = "quick_user";
 
 const LOGIN_ALIASES = new Map([
   ["basel", "basel.slaby@gmail.com"],
@@ -81,12 +82,14 @@ const elements = {
   appShell: document.getElementById("appShell"),
   requestsView: document.getElementById("requestsView"),
   quickRequestsView: document.getElementById("quickRequestsView"),
+  viewSwitcher: document.getElementById("viewSwitcher"),
   showRequestsView: document.getElementById("showRequestsView"),
   showQuickRequestsView: document.getElementById("showQuickRequestsView"),
   quickRequestsCount: document.getElementById("quickRequestsCount"),
   quickRequestList: document.getElementById("quickRequestList"),
   quickEmptyState: document.getElementById("quickEmptyState"),
   openQuickAddButton: document.getElementById("openQuickAddButton"),
+  refreshQuickRequestsButton: document.getElementById("refreshQuickRequestsButton"),
   currentUserName: document.getElementById("currentUserName"),
   currentUserRole: document.getElementById("currentUserRole"),
   logoutButton: document.getElementById("logoutButton"),
@@ -389,13 +392,24 @@ function showAuthGate(message = "") {
   state.syncTimer = null;
 }
 
+function canAccessPurchaseRequests() {
+  return CURRENT_USER.role === "admin" || CURRENT_USER.role === "user";
+}
+
+function currentRoleLabel() {
+  if (CURRENT_USER.role === "admin") return "مدير";
+  if (CURRENT_USER.role === QUICK_ONLY_ROLE) return "طلبات جديدة فقط";
+  return "مستخدم";
+}
+
 function showApplication() {
   state.isAuthenticated = true;
   elements.authGate.hidden = true;
   elements.appShell.hidden = false;
+  if (!canAccessPurchaseRequests()) state.activeView = "quick";
   syncActiveView();
   elements.currentUserName.textContent = CURRENT_USER.name || "مستخدم";
-  elements.currentUserRole.textContent = CURRENT_USER.role === "admin" ? "مدير" : "مستخدم";
+  elements.currentUserRole.textContent = currentRoleLabel();
 }
 
 async function loadCurrentProfile(user) {
@@ -507,23 +521,22 @@ async function fetchDeletionLog() {
   return (data || []).map(dbDeletionToApp);
 }
 
-async function refreshAppData({ silent = false } = {}) {
-  if (!state.isAuthenticated || state.isRefreshing) return;
+async function refreshPurchaseData({ silent = false } = {}) {
+  if (!state.isAuthenticated || state.isRefreshing || !canAccessPurchaseRequests()) return;
 
   state.isRefreshing = true;
-  if (!silent) showToast("جارٍ تحديث البيانات...");
+  if (!silent) showToast("جارٍ تحديث الطلبات الحالية...");
 
   try {
-    const [requests, quickRequests, deletionLog] = await Promise.all([
+    const [requests, deletionLog] = await Promise.all([
       fetchRequests(),
-      fetchQuickRequests(),
       fetchDeletionLog()
     ]);
 
     state.requests = requests;
-    state.quickRequests = quickRequests;
     state.deletionLog = deletionLog;
-    render();
+    renderPurchaseRequests();
+    syncActiveView();
 
     if (state.activeDetailsId) {
       const stillExists = state.requests.some((request) => request.id === state.activeDetailsId);
@@ -531,18 +544,50 @@ async function refreshAppData({ silent = false } = {}) {
       else closeDetails();
     }
 
+    if (!silent) showToast("تم تحديث الطلبات الحالية");
+  } catch (error) {
+    handleDatabaseError(error, "تعذر تحميل الطلبات الحالية");
+  } finally {
+    state.isRefreshing = false;
+  }
+}
+
+async function refreshQuickRequests({ silent = false } = {}) {
+  if (!state.isAuthenticated || state.isRefreshing) return;
+
+  state.isRefreshing = true;
+  if (!silent) showToast("جارٍ تحديث الطلبات الجديدة...");
+
+  try {
+    state.quickRequests = await fetchQuickRequests();
+    renderQuickRequests();
+
     if (state.activeQuickDetailsId) {
       const stillExists = state.quickRequests.some((request) => request.id === state.activeQuickDetailsId);
       if (stillExists) renderQuickDetails(state.activeQuickDetailsId);
       else closeQuickDetails();
     }
 
-    if (!silent) showToast("تم تحديث البيانات");
+    if (!silent) showToast("تم تحديث الطلبات الجديدة");
   } catch (error) {
-    handleDatabaseError(error, "تعذر تحميل البيانات");
+    handleDatabaseError(error, "تعذر تحميل الطلبات الجديدة");
   } finally {
     state.isRefreshing = false;
   }
+}
+
+async function refreshActiveView({ silent = false } = {}) {
+  if (state.activeView === "quick" || !canAccessPurchaseRequests()) {
+    return refreshQuickRequests({ silent });
+  }
+  return refreshPurchaseData({ silent });
+}
+
+async function refreshInitialData() {
+  if (canAccessPurchaseRequests()) {
+    await refreshPurchaseData({ silent: true });
+  }
+  await refreshQuickRequests({ silent: true });
 }
 
 async function persistRequestOrder() {
@@ -582,7 +627,7 @@ async function moveRequestToTop(requestId) {
     .eq("id", requestId);
 
   if (error) {
-    await refreshAppData({ silent: true });
+    await refreshPurchaseData({ silent: true });
     throw error;
   }
 
@@ -592,6 +637,8 @@ async function moveRequestToTop(requestId) {
 
 function canAutoRefresh() {
   return state.isAuthenticated &&
+    canAccessPurchaseRequests() &&
+    state.activeView === "requests" &&
     document.visibilityState === "visible" &&
     elements.detailsOverlay.hidden &&
     elements.quickDetailsOverlay.hidden &&
@@ -603,7 +650,7 @@ function canAutoRefresh() {
 function startAutoRefresh() {
   window.clearInterval(state.syncTimer);
   state.syncTimer = window.setInterval(() => {
-    if (canAutoRefresh()) refreshAppData({ silent: true });
+    if (canAutoRefresh()) refreshPurchaseData({ silent: true });
   }, AUTO_REFRESH_MS);
 }
 
@@ -617,7 +664,7 @@ async function enterAuthenticatedApp(session) {
   try {
     await loadCurrentProfile(session.user);
     showApplication();
-    await refreshAppData({ silent: true });
+    await refreshInitialData();
     startAutoRefresh();
   } catch (error) {
     console.error(error);
@@ -1061,20 +1108,32 @@ function renderQuickRequests() {
 }
 
 function syncActiveView() {
+  const canOpenPurchases = canAccessPurchaseRequests();
+  if (!canOpenPurchases) state.activeView = "quick";
+
   const isQuick = state.activeView === "quick";
-  elements.requestsView.hidden = isQuick;
+  elements.requestsView.hidden = isQuick || !canOpenPurchases;
   elements.quickRequestsView.hidden = !isQuick;
-  elements.showRequestsView.classList.toggle("is-active", !isQuick);
+  elements.showRequestsView.hidden = !canOpenPurchases;
+  elements.viewSwitcher.classList.toggle("is-single-view", !canOpenPurchases);
+  elements.showRequestsView.classList.toggle("is-active", canOpenPurchases && !isQuick);
   elements.showQuickRequestsView.classList.toggle("is-active", isQuick);
-  elements.addRequestButton.hidden = !state.isAuthenticated || isQuick;
+  elements.addRequestButton.hidden = !state.isAuthenticated || isQuick || !canOpenPurchases;
 }
 
 function setActiveView(view) {
+  if (view === "requests" && !canAccessPurchaseRequests()) {
+    state.activeView = "quick";
+    syncActiveView();
+    showToast("هذا الحساب مخصص للطلبات الجديدة فقط");
+    return;
+  }
+
   state.activeView = view === "quick" ? "quick" : "requests";
   syncActiveView();
 }
 
-function render() {
+function renderPurchaseRequests() {
   const filteredRequests = getFilteredRequests();
 
   elements.requestList.innerHTML = filteredRequests
@@ -1103,6 +1162,10 @@ function render() {
   elements.searchInput.value = state.filters.query;
   renderAppliedFilters();
   renderDeletionLog();
+}
+
+function render() {
+  renderPurchaseRequests();
   renderQuickRequests();
   syncActiveView();
 }
@@ -2190,7 +2253,7 @@ async function createQuickRequest(formData) {
     throw uploadError;
   }
 
-  await refreshAppData({ silent: true });
+  await refreshQuickRequests({ silent: true });
   return data.id;
 }
 
@@ -2212,7 +2275,7 @@ async function saveQuickRequestDetails(form) {
     .eq("id", requestId);
   if (error) throw error;
 
-  await refreshAppData({ silent: true });
+  await refreshQuickRequests({ silent: true });
   showToast("تم حفظ بيانات الطلب الجديد");
 }
 
@@ -2232,7 +2295,7 @@ async function deleteQuickRequest(requestId) {
   const { error } = await client.from("quick_requests").delete().eq("id", requestId);
   if (error) throw error;
   closeQuickDetails();
-  await refreshAppData({ silent: true });
+  await refreshQuickRequests({ silent: true });
   showToast("تم حذف الطلب الجديد");
 }
 
@@ -2651,7 +2714,7 @@ async function saveRequestDetails(form) {
 
   if (error) throw error;
   state.detailsEditMode = false;
-  await refreshAppData({ silent: true });
+  await refreshPurchaseData({ silent: true });
   showToast("تم حفظ تعديلات الطلب");
 }
 
@@ -2707,7 +2770,7 @@ async function savePurchaseItemDetails(form, isNew) {
   const savedItemId = itemId;
   state.editingItemId = null;
   state.addingItemRequestId = null;
-  await refreshAppData({ silent: true });
+  await refreshPurchaseData({ silent: true });
   window.setTimeout(() => scrollDetailsToPurchaseItem(savedItemId), 80);
 
   if (imageWarning) window.alert(imageWarning);
@@ -2734,7 +2797,7 @@ async function deleteRequestWithPassword(requestId) {
     if (error) throw error;
 
     closeDetails();
-    await refreshAppData({ silent: true });
+    await refreshPurchaseData({ silent: true });
     showToast("تم حذف الوثيقة وتسجيل العملية في سجل الحذف");
   } catch (error) {
     const message = String(error?.message || "");
@@ -2829,7 +2892,7 @@ async function addRequest(formData) {
     }
   }
 
-  await refreshAppData({ silent: true });
+  await refreshPurchaseData({ silent: true });
   return { requestId, attachmentWarning };
 }
 
@@ -3153,7 +3216,7 @@ elements.quickDetailsContent.addEventListener("change", async (event) => {
     showToast("جارٍ تجهيز الصور...");
     const prepared = await prepareSelectedAttachments(files);
     await uploadQuickRequestImages(requestId, prepared);
-    await refreshAppData({ silent: true });
+    await refreshQuickRequests({ silent: true });
     showToast(`تمت إضافة ${prepared.length.toLocaleString("ar-SY")} صورة`);
   } catch (error) {
     handleDatabaseError(error, "تعذر إضافة الصور");
@@ -3168,7 +3231,7 @@ elements.quickDetailsContent.addEventListener("click", async (event) => {
     if (!window.confirm("هل تريد حذف هذه الصورة؟")) return;
     try {
       await deleteQuickRequestImage(requestId, imageId);
-      await refreshAppData({ silent: true });
+      await refreshQuickRequests({ silent: true });
       showToast("تم حذف الصورة");
     } catch (error) {
       handleDatabaseError(error, "تعذر حذف الصورة");
@@ -3278,7 +3341,7 @@ elements.detailsContent.addEventListener("click", async (event) => {
     deleteAttachmentButton.textContent = "جارٍ الحذف...";
     try {
       await deleteAttachment(requestId, attachmentId);
-      await refreshAppData({ silent: true });
+      await refreshPurchaseData({ silent: true });
       showToast(isImage ? "تم حذف الصورة" : "تم حذف المرفق");
     } catch (error) {
       handleDatabaseError(error, isImage ? "تعذر حذف الصورة" : "تعذر حذف المرفق");
@@ -3427,7 +3490,7 @@ elements.detailsContent.addEventListener("change", async (event) => {
       showToast("جارٍ تجهيز صور الطلب...");
       const prepared = await prepareSelectedAttachments(files);
       await uploadRequestAttachments(requestId, prepared);
-      await refreshAppData({ silent: true });
+      await refreshPurchaseData({ silent: true });
       showToast(`تم رفع ${prepared.length} صورة للطلب`);
     } catch (error) {
       handleDatabaseError(error, "تعذر رفع صور الطلب");
@@ -3447,7 +3510,7 @@ elements.detailsContent.addEventListener("change", async (event) => {
       showToast("جارٍ تجهيز صور البند...");
       const prepared = await prepareSelectedAttachments(files);
       await uploadItemAttachments(requestId, itemId, prepared);
-      await refreshAppData({ silent: true });
+      await refreshPurchaseData({ silent: true });
       renderDetails(requestId);
       showToast(`تم رفع ${prepared.length} صورة للبند`);
     } catch (error) {
@@ -3719,6 +3782,7 @@ document.querySelectorAll("[data-close-filters]").forEach((element) => {
 
 elements.showRequestsView.addEventListener("click", () => setActiveView("requests"));
 elements.showQuickRequestsView.addEventListener("click", () => setActiveView("quick"));
+elements.refreshQuickRequestsButton.addEventListener("click", () => refreshQuickRequests());
 elements.openQuickAddButton.addEventListener("click", openQuickAddForm);
 
 document.querySelectorAll("[data-close-quick-add]").forEach((element) => {
@@ -3780,7 +3844,13 @@ elements.quickAddForm.addEventListener("submit", async (event) => {
   }
 });
 
-elements.addRequestButton.addEventListener("click", openAddForm);
+elements.addRequestButton.addEventListener("click", () => {
+  if (!canAccessPurchaseRequests()) {
+    showToast("هذا الحساب مخصص للطلبات الجديدة فقط");
+    return;
+  }
+  openAddForm();
+});
 
 elements.addMaterialItemButton.addEventListener("click", () => {
   addMaterialItemEditor();
@@ -3970,14 +4040,14 @@ elements.logoutButton.addEventListener("click", async () => {
   await getSupabase().auth.signOut();
 });
 
-elements.refreshButton.addEventListener("click", () => refreshAppData());
+elements.refreshButton.addEventListener("click", () => refreshActiveView());
 
 window.addEventListener("focus", () => {
-  if (canAutoRefresh()) refreshAppData({ silent: true });
+  if (canAutoRefresh()) refreshPurchaseData({ silent: true });
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (canAutoRefresh()) refreshAppData({ silent: true });
+  if (canAutoRefresh()) refreshPurchaseData({ silent: true });
 });
 
 resetMaterialItemsEditor();

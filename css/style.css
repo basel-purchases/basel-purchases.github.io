@@ -2327,9 +2327,26 @@ body.has-overlay {
   line-height: 1.7;
 }
 
-.quick-add-button {
+.quick-view__actions {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-add-button,
+.quick-refresh-button {
+  flex: 0 0 auto;
+  padding-inline: 16px;
   white-space: nowrap;
+}
+
+.quick-refresh-button {
+  color: #dbeafe;
+}
+
+.view-switcher.is-single-view {
+  grid-template-columns: 1fr;
 }
 
 .quick-request-grid {
@@ -2589,7 +2606,14 @@ body.has-overlay {
     flex-direction: column;
   }
 
-  .quick-add-button {
+  .quick-view__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .quick-add-button,
+  .quick-refresh-button {
     width: 100%;
   }
 

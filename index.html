@@ -8,7 +8,7 @@
 
   <title>نظام إدارة المشتريات</title>
 
-  <link rel="stylesheet" href="css/style.css?v=9.2.0-20260809">
+  <link rel="stylesheet" href="css/style.css?v=9.3.0-20260810">
 </head>
 
 <body>
@@ -55,7 +55,7 @@
       </div>
     </header>
 
-    <nav class="view-switcher" aria-label="التنقل بين أقسام الطلبات">
+    <nav id="viewSwitcher" class="view-switcher" aria-label="التنقل بين أقسام الطلبات">
       <button id="showRequestsView" class="view-switcher__button is-active" type="button">الطلبات الحالية</button>
       <button id="showQuickRequestsView" class="view-switcher__button" type="button">
         طلبات جديدة
@@ -133,7 +133,10 @@
           <h2 id="quickRequestsHeading">طلبات جديدة</h2>
           <p>سجّل أي معلومة متوفرة الآن، واستكمل بقية بيانات متابعة الورقيات لاحقًا.</p>
         </div>
-        <button id="openQuickAddButton" class="primary-button quick-add-button" type="button">＋ إضافة طلب جديد</button>
+        <div class="quick-view__actions">
+          <button id="refreshQuickRequestsButton" class="secondary-button quick-refresh-button" type="button" title="تحديث الطلبات الجديدة">↻ تحديث البيانات</button>
+          <button id="openQuickAddButton" class="primary-button quick-add-button" type="button">＋ إضافة طلب جديد</button>
+        </div>
       </header>
 
       <section id="quickRequestList" class="quick-request-grid" aria-live="polite"></section>
@@ -492,7 +495,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=9.2.0-20260809"></script>
-  <script src="js/app.js?v=9.2.0-20260809"></script>
+  <script src="js/supabase-config.js?v=9.3.0-20260810"></script>
+  <script src="js/app.js?v=9.3.0-20260810"></script>
 </body>
 </html>
