@@ -2653,3 +2653,181 @@ body.has-overlay {
   font-size: 9px;
   font-weight: 700;
 }
+
+
+/* V9.4 - quick requests: location workflow, purchase-created status, and filtering */
+.quick-status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: -2px 0 12px;
+}
+
+.quick-status-filters button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.58);
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.quick-status-filters button.is-selected {
+  border-color: rgba(56, 189, 248, 0.62);
+  background: rgba(14, 165, 233, 0.18);
+  color: #e0f2fe;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.14) inset;
+}
+
+.quick-request-card.is-purchase-created {
+  border-color: rgba(74, 222, 128, 0.5);
+  background: linear-gradient(160deg, rgba(20, 83, 45, 0.62), rgba(15, 45, 35, 0.96));
+  box-shadow: 0 12px 30px rgba(20, 83, 45, 0.22);
+}
+
+.quick-request-card__created-badge {
+  width: fit-content;
+  margin: -2px 0 8px;
+  padding: 5px 9px;
+  border: 1px solid rgba(134, 239, 172, 0.32);
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.14);
+  color: #bbf7d0;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.quick-request-card__location-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.quick-request-card__location-value {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.quick-request-card__location-value b {
+  color: #7dd3fc;
+  font-size: 10px;
+}
+
+.quick-request-card__location-value strong {
+  overflow-wrap: anywhere;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.quick-request-card.is-purchase-created .quick-request-card__location-value b {
+  color: #86efac;
+}
+
+.quick-location-button {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 10px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #dbeafe;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.quick-request-card.is-purchase-created .quick-location-button {
+  border-color: rgba(134, 239, 172, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  color: #dcfce7;
+}
+
+.quick-purchase-status {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 14px;
+  padding: 11px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 16px;
+  background: rgba(37, 99, 235, 0.07);
+}
+
+.quick-purchase-status.is-created {
+  border-color: rgba(74, 222, 128, 0.38);
+  background: rgba(34, 197, 94, 0.09);
+}
+
+.quick-purchase-created-button {
+  min-height: 44px;
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.16);
+  color: #e0f2fe;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quick-purchase-created-button.is-created {
+  border-color: rgba(74, 222, 128, 0.48);
+  background: rgba(22, 163, 74, 0.2);
+  color: #dcfce7;
+}
+
+.quick-purchase-created-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.quick-purchase-status small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.quick-location-sheet {
+  max-width: 460px;
+}
+
+.quick-location-request-title {
+  max-width: 320px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.quick-location-form {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+.quick-location-form input {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.quick-location-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .quick-location-actions > button {
+    width: 100%;
+  }
+
+  .quick-location-actions {
+    grid-template-columns: 1fr;
+  }
+}

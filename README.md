@@ -38,3 +38,11 @@ where p.id = u.id
 
 - `css/style.css?v=9.3.0-20260810`
 - `js/app.js?v=9.3.0-20260810`
+
+
+## V9.4
+- Quick requests now use the label **مكان الطلب**.
+- The location is emphasized on each card and can be changed from a one-field dialog.
+- A quick request can be marked **تم إنشاء طلب الشراء**; completed cards appear green.
+- Quick requests can be filtered by purchase-request creation status; **not created** is the default.
+- Run `basel-purchases-v9.4-quick-purchase-status.sql` once in Supabase before deploying this version.

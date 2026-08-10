@@ -31,7 +31,9 @@ const LOGIN_ALIASES = new Map([
   ["samer", "samer@purchases.com"],
   ["سامر", "samer@purchases.com"],
   ["guest", "guest@purchases.com"],
-  ["ضيف", "guest@purchases.com"]
+  ["ضيف", "guest@purchases.com"],
+  ["orders", "orders@purchases.com"],
+  ["manager.secretary", "manager.secretary@purchases.com"]
 ]);
 
 const defaultFilters = {
@@ -52,6 +54,8 @@ const state = {
   deletionLog: [],
   activeDetailsId: null,
   activeQuickDetailsId: null,
+  activeQuickLocationId: null,
+  quickPurchaseFilter: "not-created",
   detailsEditMode: false,
   editingItemId: null,
   addingItemRequestId: null,
@@ -90,6 +94,9 @@ const elements = {
   quickEmptyState: document.getElementById("quickEmptyState"),
   openQuickAddButton: document.getElementById("openQuickAddButton"),
   refreshQuickRequestsButton: document.getElementById("refreshQuickRequestsButton"),
+  quickStatusFilters: document.getElementById("quickStatusFilters"),
+  quickEmptyStateTitle: document.getElementById("quickEmptyStateTitle"),
+  quickEmptyStateText: document.getElementById("quickEmptyStateText"),
   currentUserName: document.getElementById("currentUserName"),
   currentUserRole: document.getElementById("currentUserRole"),
   logoutButton: document.getElementById("logoutButton"),
@@ -117,6 +124,10 @@ const elements = {
   quickDetailsOverlay: document.getElementById("quickDetailsOverlay"),
   quickDetailsTitle: document.getElementById("quickDetailsTitle"),
   quickDetailsContent: document.getElementById("quickDetailsContent"),
+  quickLocationOverlay: document.getElementById("quickLocationOverlay"),
+  quickLocationTitle: document.getElementById("quickLocationTitle"),
+  quickLocationForm: document.getElementById("quickLocationForm"),
+  quickLocationInput: document.getElementById("quickLocationInput"),
   quickAddOverlay: document.getElementById("quickAddOverlay"),
   quickAddForm: document.getElementById("quickAddForm"),
   quickImagesInput: document.getElementById("quickImagesInput"),
@@ -281,6 +292,7 @@ function dbQuickRequestToApp(row) {
     details: String(row.details || ""),
     department: row.department_code || "",
     location: String(row.location || ""),
+    purchaseRequestCreated: Boolean(row.purchase_request_created),
     createdAt: row.created_at,
     updatedAt: row.updated_at || null,
     images: [...(row.quick_request_images || [])]
@@ -469,7 +481,7 @@ async function fetchQuickRequests() {
   const { data, error } = await getSupabase()
     .from("quick_requests")
     .select(`
-      id, title, details, department_code, location, created_at, updated_at,
+      id, title, details, department_code, location, purchase_request_created, created_at, updated_at,
       quick_request_images (
         id, storage_path, original_name, mime_type, size_bytes, created_at
       )
@@ -1076,6 +1088,16 @@ function renderDeletionLog() {
     .join("");
 }
 
+function getFilteredQuickRequests() {
+  if (state.quickPurchaseFilter === "created") {
+    return state.quickRequests.filter((request) => request.purchaseRequestCreated);
+  }
+  if (state.quickPurchaseFilter === "not-created") {
+    return state.quickRequests.filter((request) => !request.purchaseRequestCreated);
+  }
+  return state.quickRequests;
+}
+
 function quickRequestCardMarkup(request) {
   const firstImage = (request.images || [])[0];
   const title = request.title || "طلب جديد بلا اسم";
@@ -1085,7 +1107,8 @@ function quickRequestCardMarkup(request) {
     : `<div class="quick-request-card__placeholder" aria-label="لا توجد صورة"><span>📄</span><small>لا توجد صورة</small></div>`;
 
   return `
-    <article class="quick-request-card" data-quick-request-id="${escapeHtml(request.id)}" tabindex="0" aria-label="${escapeHtml(title)}. انقر مرتين لعرض التفاصيل">
+    <article class="quick-request-card ${request.purchaseRequestCreated ? "is-purchase-created" : ""}" data-quick-request-id="${escapeHtml(request.id)}" tabindex="0" aria-label="${escapeHtml(title)}. انقر مرتين لعرض التفاصيل">
+      ${request.purchaseRequestCreated ? '<div class="quick-request-card__created-badge">✓ تم إنشاء طلب الشراء</div>' : ""}
       <h3>${escapeHtml(title)}</h3>
       <div class="quick-request-card__media">
         ${imageMarkup}
@@ -1093,7 +1116,13 @@ function quickRequestCardMarkup(request) {
       </div>
       <footer>
         <span><b>الجهة:</b> ${escapeHtml(department)}</span>
-        <span><b>متابعة الورقيات:</b> ${escapeHtml(request.location || "غير محدد")}</span>
+        <div class="quick-request-card__location-row">
+          <div class="quick-request-card__location-value">
+            <b>مكان الطلب</b>
+            <strong>${escapeHtml(request.location || "غير محدد")}</strong>
+          </div>
+          <button class="quick-location-button" type="button" data-edit-quick-location="${escapeHtml(request.id)}">تغيير مكان الطلب</button>
+        </div>
       </footer>
       <small>نقرتان لعرض كل التفاصيل</small>
     </article>
@@ -1101,10 +1130,28 @@ function quickRequestCardMarkup(request) {
 }
 
 function renderQuickRequests() {
-  elements.quickRequestList.innerHTML = state.quickRequests.map(quickRequestCardMarkup).join("");
-  elements.quickEmptyState.hidden = state.quickRequests.length !== 0;
-  elements.quickRequestList.hidden = state.quickRequests.length === 0;
+  const filteredRequests = getFilteredQuickRequests();
+  elements.quickRequestList.innerHTML = filteredRequests.map(quickRequestCardMarkup).join("");
+  elements.quickEmptyState.hidden = filteredRequests.length !== 0;
+  elements.quickRequestList.hidden = filteredRequests.length === 0;
   elements.quickRequestsCount.textContent = state.quickRequests.length.toLocaleString("ar-SY");
+
+  elements.quickStatusFilters?.querySelectorAll("[data-quick-status-filter]").forEach((button) => {
+    button.classList.toggle("is-selected", button.dataset.quickStatusFilter === state.quickPurchaseFilter);
+  });
+
+  if (elements.quickEmptyStateTitle && elements.quickEmptyStateText) {
+    if (state.quickPurchaseFilter === "not-created") {
+      elements.quickEmptyStateTitle.textContent = "لا توجد طلبات بانتظار إنشاء طلب الشراء";
+      elements.quickEmptyStateText.textContent = "كل الطلبات الظاهرة في النظام تم تعليمها بأنها تحولت إلى طلب شراء.";
+    } else if (state.quickPurchaseFilter === "created") {
+      elements.quickEmptyStateTitle.textContent = "لا توجد طلبات تم إنشاء طلب شراء لها";
+      elements.quickEmptyStateText.textContent = "عند تعليم أي طلب من داخل التفاصيل سيظهر هنا باللون الأخضر.";
+    } else {
+      elements.quickEmptyStateTitle.textContent = "لا توجد طلبات جديدة بعد";
+      elements.quickEmptyStateText.textContent = "أضف أي معلومة متوفرة عن المعاملة الآن، ويمكن استكمال الباقي لاحقًا.";
+    }
+  }
 }
 
 function syncActiveView() {
@@ -1191,7 +1238,10 @@ function closeOverlay(overlay) {
 
   if (
     elements.detailsOverlay.hidden &&
+    elements.quickDetailsOverlay.hidden &&
+    elements.quickLocationOverlay.hidden &&
     elements.addOverlay.hidden &&
+    elements.quickAddOverlay.hidden &&
     elements.filtersOverlay.hidden
   ) {
     document.body.classList.remove("has-overlay");
@@ -1942,6 +1992,13 @@ function renderQuickDetails(requestId) {
       ${request.updatedAt ? `<span>آخر تعديل: ${escapeHtml(formatDate(request.updatedAt, true))}</span>` : ""}
     </section>
 
+    <section class="quick-purchase-status ${request.purchaseRequestCreated ? "is-created" : ""}">
+      <button class="quick-purchase-created-button ${request.purchaseRequestCreated ? "is-created" : ""}" type="button" data-toggle-quick-purchase-created="${escapeHtml(request.id)}" aria-pressed="${request.purchaseRequestCreated ? "true" : "false"}">
+        ✓ تم إنشاء طلب الشراء
+      </button>
+      <small>${request.purchaseRequestCreated ? "تم تسجيل الحالة — اضغط الزر للتراجع عن العلامة." : "بعد إنشاء طلب الشراء اضغط هنا؛ ستتحول البطاقة في الصفحة الرئيسية إلى اللون الأخضر."}</small>
+    </section>
+
     <section class="quick-details-images-section">
       <div class="quick-details-section-heading">
         <h3>الصور</h3>
@@ -1965,7 +2022,7 @@ function renderQuickDetails(requestId) {
 
     <form class="request-form quick-details-form" data-quick-request-form="${escapeHtml(request.id)}">
       <label>
-        <span>مكان متابعة الورقيات <small class="optional-label">اختياري</small></span>
+        <span>مكان الطلب <small class="optional-label">اختياري</small></span>
         <input name="location" type="text" maxlength="180" value="${escapeHtml(request.location)}" placeholder="مثال: مكتب الطلبيات - الإدارة العامة">
       </label>
 
@@ -2008,6 +2065,60 @@ function openQuickDetails(requestId) {
 function closeQuickDetails() {
   state.activeQuickDetailsId = null;
   closeOverlay(elements.quickDetailsOverlay);
+}
+
+function openQuickLocationDialog(requestId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) return;
+  state.activeQuickLocationId = requestId;
+  elements.quickLocationTitle.textContent = request.title || "تغيير مكان الطلب";
+  elements.quickLocationInput.value = request.location || "";
+  openOverlay(elements.quickLocationOverlay);
+  window.setTimeout(() => {
+    elements.quickLocationInput.focus();
+    elements.quickLocationInput.select();
+  }, 100);
+}
+
+function closeQuickLocationDialog() {
+  state.activeQuickLocationId = null;
+  closeOverlay(elements.quickLocationOverlay);
+}
+
+async function saveQuickLocation() {
+  const requestId = state.activeQuickLocationId;
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) throw new Error("تعذر العثور على الطلب.");
+  const location = String(elements.quickLocationInput.value || "").trim();
+  const { error } = await getSupabase()
+    .from("quick_requests")
+    .update({ location })
+    .eq("id", requestId);
+  if (error) throw error;
+
+  request.location = location;
+  request.updatedAt = new Date().toISOString();
+  renderQuickRequests();
+  if (state.activeQuickDetailsId === requestId) renderQuickDetails(requestId);
+  closeQuickLocationDialog();
+  showToast("تم تغيير مكان الطلب");
+}
+
+async function toggleQuickPurchaseCreated(requestId) {
+  const request = state.quickRequests.find((item) => item.id === requestId);
+  if (!request) throw new Error("تعذر العثور على الطلب.");
+  const nextValue = !request.purchaseRequestCreated;
+  const { error } = await getSupabase()
+    .from("quick_requests")
+    .update({ purchase_request_created: nextValue })
+    .eq("id", requestId);
+  if (error) throw error;
+
+  request.purchaseRequestCreated = nextValue;
+  request.updatedAt = new Date().toISOString();
+  renderQuickRequests();
+  if (state.activeQuickDetailsId === requestId) renderQuickDetails(requestId);
+  showToast(nextValue ? "تم تعليم الطلب: تم إنشاء طلب الشراء" : "تم إلغاء علامة إنشاء طلب الشراء");
 }
 
 function openQuickAddForm() {
@@ -3173,6 +3284,11 @@ elements.requestList.addEventListener("keydown", (event) => {
 });
 
 elements.quickRequestList.addEventListener("click", (event) => {
+  const locationButton = event.target.closest("[data-edit-quick-location]");
+  if (locationButton) {
+    openQuickLocationDialog(locationButton.dataset.editQuickLocation);
+    return;
+  }
   const card = event.target.closest(".quick-request-card");
   if (!card) return;
   const now = Date.now();
@@ -3189,6 +3305,7 @@ elements.quickRequestList.addEventListener("click", (event) => {
 });
 
 elements.quickRequestList.addEventListener("dblclick", (event) => {
+  if (event.target.closest("button")) return;
   const card = event.target.closest(".quick-request-card");
   if (card) openQuickDetails(card.dataset.quickRequestId);
 });
@@ -3224,6 +3341,18 @@ elements.quickDetailsContent.addEventListener("change", async (event) => {
 });
 
 elements.quickDetailsContent.addEventListener("click", async (event) => {
+  const purchaseCreatedButton = event.target.closest("[data-toggle-quick-purchase-created]");
+  if (purchaseCreatedButton) {
+    purchaseCreatedButton.disabled = true;
+    try {
+      await toggleQuickPurchaseCreated(purchaseCreatedButton.dataset.toggleQuickPurchaseCreated);
+    } catch (error) {
+      handleDatabaseError(error, "تعذر تغيير حالة إنشاء طلب الشراء");
+      purchaseCreatedButton.disabled = false;
+    }
+    return;
+  }
+
   const deleteImageButton = event.target.closest("[data-delete-quick-image]");
   if (deleteImageButton) {
     const requestId = deleteImageButton.dataset.quickRequestId;
@@ -3784,6 +3913,32 @@ elements.showRequestsView.addEventListener("click", () => setActiveView("request
 elements.showQuickRequestsView.addEventListener("click", () => setActiveView("quick"));
 elements.refreshQuickRequestsButton.addEventListener("click", () => refreshQuickRequests());
 elements.openQuickAddButton.addEventListener("click", openQuickAddForm);
+
+elements.quickStatusFilters.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-quick-status-filter]");
+  if (!button) return;
+  state.quickPurchaseFilter = button.dataset.quickStatusFilter;
+  renderQuickRequests();
+});
+
+elements.quickLocationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submitButton = elements.quickLocationForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = "جارٍ الحفظ...";
+  try {
+    await saveQuickLocation();
+  } catch (error) {
+    handleDatabaseError(error, "تعذر تغيير مكان الطلب");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "موافق";
+  }
+});
+
+document.querySelectorAll("[data-close-quick-location]").forEach((element) => {
+  element.addEventListener("click", closeQuickLocationDialog);
+});
 
 document.querySelectorAll("[data-close-quick-add]").forEach((element) => {
   element.addEventListener("click", closeQuickAddForm);

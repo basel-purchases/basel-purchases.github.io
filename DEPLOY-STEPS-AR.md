@@ -18,3 +18,10 @@ from auth.users u
 where p.id = u.id
   and lower(u.email) = lower('new-user@example.com');
 ```
+
+
+## تحديث V9.4
+1. شغّل `basel-purchases-v9.4-quick-purchase-status.sql` مرة واحدة في Supabase SQL Editor.
+2. بعد نجاحه ارفع ملفات V9.4 مكان النسخة الحالية.
+3. حدّث الصفحة تحديثًا قويًا حتى تُحمّل ملفات CSS وJavaScript الجديدة.
+4. صفحة الطلبات الجديدة تبدأ افتراضيًا بفلتر «لم يتم إنشاء طلب الشراء».

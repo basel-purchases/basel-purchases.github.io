@@ -8,7 +8,7 @@
 
   <title>نظام إدارة المشتريات</title>
 
-  <link rel="stylesheet" href="css/style.css?v=9.3.0-20260810">
+  <link rel="stylesheet" href="css/style.css?v=9.4.0-20260810">
 </head>
 
 <body>
@@ -131,7 +131,7 @@
         <div>
           <p class="quick-view__eyebrow">تسجيل سريع الآن واستكمال البيانات لاحقًا</p>
           <h2 id="quickRequestsHeading">طلبات جديدة</h2>
-          <p>سجّل أي معلومة متوفرة الآن، واستكمل بقية بيانات متابعة الورقيات لاحقًا.</p>
+          <p>سجّل أي معلومة متوفرة الآن، وحدد مكان الطلب واستكمل بقية البيانات لاحقًا.</p>
         </div>
         <div class="quick-view__actions">
           <button id="refreshQuickRequestsButton" class="secondary-button quick-refresh-button" type="button" title="تحديث الطلبات الجديدة">↻ تحديث البيانات</button>
@@ -139,12 +139,18 @@
         </div>
       </header>
 
+      <div id="quickStatusFilters" class="quick-status-filters" role="group" aria-label="فلترة حالة إنشاء طلب الشراء">
+        <button type="button" data-quick-status-filter="not-created" class="is-selected">لم يتم إنشاء طلب الشراء</button>
+        <button type="button" data-quick-status-filter="created">تم إنشاء طلب الشراء</button>
+        <button type="button" data-quick-status-filter="all">الكل</button>
+      </div>
+
       <section id="quickRequestList" class="quick-request-grid" aria-live="polite"></section>
 
       <section id="quickEmptyState" class="empty-state" hidden>
         <div class="empty-state__icon">📄</div>
-        <h3>لا توجد طلبات جديدة بعد</h3>
-        <p>أضف أي معلومة متوفرة عن المعاملة الآن، ويمكن استكمال الباقي لاحقًا.</p>
+        <h3 id="quickEmptyStateTitle">لا توجد طلبات جديدة بعد</h3>
+        <p id="quickEmptyStateText">أضف أي معلومة متوفرة عن المعاملة الآن، ويمكن استكمال الباقي لاحقًا.</p>
       </section>
     </section>
   </div>
@@ -431,6 +437,33 @@
     </section>
   </div>
 
+
+  <div id="quickLocationOverlay" class="overlay" hidden>
+    <div class="overlay__backdrop" data-close-quick-location></div>
+
+    <section class="sheet quick-location-sheet" role="dialog" aria-modal="true" aria-labelledby="quickLocationHeading">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <header class="sheet__header">
+        <div>
+          <p class="sheet__eyebrow">تعديل سريع</p>
+          <h2 id="quickLocationHeading">تغيير مكان الطلب</h2>
+          <p id="quickLocationTitle" class="quick-location-request-title">—</p>
+        </div>
+        <button class="icon-button" type="button" data-close-quick-location aria-label="إغلاق تغيير مكان الطلب">✕</button>
+      </header>
+      <form id="quickLocationForm" class="request-form quick-location-form">
+        <label>
+          <span>مكان الطلب</span>
+          <input id="quickLocationInput" name="location" type="text" maxlength="180" autocomplete="off" placeholder="اكتب مكان الطلب الحالي">
+        </label>
+        <div class="quick-location-actions">
+          <button class="primary-button" type="submit">موافق</button>
+          <button class="secondary-button" type="button" data-close-quick-location>إلغاء</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <div id="quickAddOverlay" class="overlay" hidden>
     <div class="overlay__backdrop" data-close-quick-add></div>
 
@@ -468,7 +501,7 @@
         </label>
 
         <label>
-          <span>مكان متابعة الورقيات <small class="optional-label">اختياري</small></span>
+          <span>مكان الطلب <small class="optional-label">اختياري</small></span>
           <input name="location" type="text" maxlength="180" placeholder="مثال: مكتب الطلبيات - الإدارة العامة">
         </label>
 
@@ -495,7 +528,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=9.3.0-20260810"></script>
-  <script src="js/app.js?v=9.3.0-20260810"></script>
+  <script src="js/supabase-config.js?v=9.4.0-20260810"></script>
+  <script src="js/app.js?v=9.4.0-20260810"></script>
 </body>
 </html>
