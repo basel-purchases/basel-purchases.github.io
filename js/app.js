@@ -873,13 +873,22 @@ function getRequestStatusValue(request) {
   return "new";
 }
 
-function getRequestStatusLabel(status) {
-  return ({
-    new: "تم رفع الطلب",
-    quotes: "تم الاستلام",
-    purchased: "تم الإدخال",
-    settled: "تمت التصفية"
-  })[status] || "تم رفع الطلب";
+function getRequestStatusLabel(status, type = "materials") {
+  const labels = type === "work-order"
+    ? {
+        new: "تم رفع الطلب",
+        quotes: "تم إنجاز العمل",
+        purchased: "تم استكمال الورقيات",
+        settled: "تمت التصفية"
+      }
+    : {
+        new: "تم رفع الطلب",
+        quotes: "تم الاستلام",
+        purchased: "تم الإدخال",
+        settled: "تمت التصفية"
+      };
+
+  return labels[status] || labels.new;
 }
 
 function statusUpdatePayload(status) {
@@ -989,10 +998,10 @@ function progressMarkup(request) {
   const currentStatus = getRequestStatusValue(request);
   const editorOpen = state.statusEditorRequestId === request.id;
   const steps = [
-    ["new", "تم رفع الطلب", "is-raised", true],
-    ["quotes", "تم الاستلام", "is-quotes", request.quotes],
-    ["purchased", "تم الإدخال", "is-purchased", request.purchased],
-    ["settled", "تمت التصفية", "is-settled", request.settled]
+    ["new", getRequestStatusLabel("new", request.type), "is-raised", true],
+    ["quotes", getRequestStatusLabel("quotes", request.type), "is-quotes", request.quotes],
+    ["purchased", getRequestStatusLabel("purchased", request.type), "is-purchased", request.purchased],
+    ["settled", getRequestStatusLabel("settled", request.type), "is-settled", request.settled]
   ];
 
   return `
@@ -1089,7 +1098,7 @@ async function handleStatusEditorClick(event) {
       state.statusEditorRequestId = null;
       render();
       if (state.activeDetailsId === requestId) renderDetails(requestId);
-      showToast(`تم تغيير الحالة إلى: ${getRequestStatusLabel(status)}`);
+      showToast(`تم تغيير الحالة إلى: ${getRequestStatusLabel(status, request.type)}`);
     } catch (error) {
       confirm.disabled = false;
       handleDatabaseError(error, "تعذر تغيير حالة الطلب");
@@ -1608,10 +1617,10 @@ function requestEditFormMarkup(request) {
         <label>
           <span>الحالة</span>
           <select name="status">
-            <option value="new" ${status === "new" ? "selected" : ""}>تم رفع الطلب</option>
-            <option value="quotes" ${status === "quotes" ? "selected" : ""}>تم الاستلام</option>
-            <option value="purchased" ${status === "purchased" ? "selected" : ""}>تم الإدخال</option>
-            <option value="settled" ${status === "settled" ? "selected" : ""}>تمت التصفية</option>
+            <option value="new" ${status === "new" ? "selected" : ""}>${getRequestStatusLabel("new", request.type)}</option>
+            <option value="quotes" ${status === "quotes" ? "selected" : ""}>${getRequestStatusLabel("quotes", request.type)}</option>
+            <option value="purchased" ${status === "purchased" ? "selected" : ""}>${getRequestStatusLabel("purchased", request.type)}</option>
+            <option value="settled" ${status === "settled" ? "selected" : ""}>${getRequestStatusLabel("settled", request.type)}</option>
           </select>
         </label>
 
@@ -2716,6 +2725,14 @@ function syncRequestTypeFields() {
 
   description.disabled = isMaterials;
   description.required = !isMaterials;
+
+  const statusSelect = elements.addRequestForm.elements.status;
+  if (statusSelect) {
+    const requestType = isMaterials ? "materials" : "work-order";
+    [...statusSelect.options].forEach((option) => {
+      option.textContent = getRequestStatusLabel(option.value, requestType);
+    });
+  }
 
   const finalPrice = elements.addRequestForm.elements.finalPrice;
   if (finalPrice) {
