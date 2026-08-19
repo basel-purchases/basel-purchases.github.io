@@ -72,7 +72,8 @@ const state = {
   materialItemSequence: 0,
   syncTimer: null,
   isRefreshing: false,
-  isAuthenticated: false
+  isAuthenticated: false,
+  statusEditorRequestId: null
 };
 
 const elements = {
@@ -163,6 +164,39 @@ function normalizeOptionalNumber(value) {
 
 function isValidManualRequestNumber(value) {
   return String(value || "").trim().length > 0;
+}
+
+function normalizeArabicDigits(value) {
+  const arabic = "٠١٢٣٤٥٦٧٨٩";
+  const persian = "۰۱۲۳۴۵۶۷۸۹";
+  return String(value || "")
+    .replace(/[٠-٩]/g, (digit) => String(arabic.indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String(persian.indexOf(digit)));
+}
+
+function normalizeRequestNumber(value) {
+  const compact = normalizeArabicDigits(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[–—−]/g, "-");
+
+  const pair = compact.match(/^(\d+)-(\d+)$/);
+  if (!pair) return compact.toLowerCase();
+
+  const parts = [pair[1], pair[2]].sort((a, b) => {
+    const numericDifference = Number(a) - Number(b);
+    return numericDifference || a.localeCompare(b);
+  });
+  return `${parts[0]}-${parts[1]}`;
+}
+
+function findDuplicateRequestNumber(value, excludeRequestId = null) {
+  const normalized = normalizeRequestNumber(value);
+  if (!normalized) return null;
+  return state.requests.find((request) =>
+    request.id !== excludeRequestId &&
+    normalizeRequestNumber(request.requestNumber) === normalized
+  ) || null;
 }
 
 function normalizePurchaseItem(item, requestId, index) {
@@ -731,9 +765,9 @@ function getStatusFilterLabel(value) {
   const labels = {
     all: "كل الحالات",
     new: "جديد",
-    quotes: "عروض أسعار",
-    purchased: "تم الشراء",
-    "not-purchased": "لم يتم الشراء"
+    quotes: "تم الاستلام",
+    purchased: "تم الإدخال",
+    "not-purchased": "لم يتم الإدخال"
   };
 
   return labels[value] || value;
@@ -833,9 +867,27 @@ function formatDateInput(dateValue) {
 }
 
 function getRequestStatusValue(request) {
+  if (request?.settled) return "settled";
   if (request?.purchased) return "purchased";
   if (request?.quotes) return "quotes";
   return "new";
+}
+
+function getRequestStatusLabel(status) {
+  return ({
+    new: "تم رفع الطلب",
+    quotes: "تم الاستلام",
+    purchased: "تم الإدخال",
+    settled: "تمت التصفية"
+  })[status] || "تم رفع الطلب";
+}
+
+function statusUpdatePayload(status) {
+  return {
+    has_quotes: status !== "new",
+    is_purchased: status === "purchased" || status === "settled",
+    is_settled: status === "settled"
+  };
 }
 
 function escapeHtml(value) {
@@ -849,6 +901,7 @@ function escapeHtml(value) {
 
 function getFilteredRequests() {
   const normalizedQuery = state.filters.query.trim().toLowerCase();
+  const normalizedRequestNumberQuery = normalizeRequestNumber(state.filters.query);
 
   return state.requests.filter((request) => {
     const matchesStatus =
@@ -915,9 +968,11 @@ function getFilteredRequests() {
       .join(" ")
       .toLowerCase();
 
+    const requestNumberSearch = normalizeRequestNumber(request.requestNumber);
     const matchesQuery =
       normalizedQuery.length === 0 ||
-      searchableText.includes(normalizedQuery);
+      searchableText.includes(normalizedQuery) ||
+      (normalizedRequestNumberQuery && requestNumberSearch.includes(normalizedRequestNumberQuery));
 
     return (
       matchesStatus &&
@@ -931,29 +986,118 @@ function getFilteredRequests() {
 }
 
 function progressMarkup(request) {
+  const currentStatus = getRequestStatusValue(request);
+  const editorOpen = state.statusEditorRequestId === request.id;
+  const steps = [
+    ["new", "تم رفع الطلب", "is-raised", true],
+    ["quotes", "تم الاستلام", "is-quotes", request.quotes],
+    ["purchased", "تم الإدخال", "is-purchased", request.purchased],
+    ["settled", "تمت التصفية", "is-settled", request.settled]
+  ];
+
   return `
-    <div class="progress" aria-label="مراحل الطلب">
-      <div class="progress-step is-raised">
-        <span class="progress-dot"></span>
-        <span>تم رفع الطلب</span>
+    <div class="progress-control">
+      <button
+        class="status-edit-button"
+        type="button"
+        data-toggle-status-editor="${escapeHtml(request.id)}"
+        aria-label="تعديل حالة الطلب"
+        title="تعديل الحالة"
+      >✎</button>
+      <div class="progress" aria-label="مراحل الطلب">
+        ${steps.map(([value, label, className, active]) => `
+          <div class="progress-step ${active ? className : ""}">
+            <span class="progress-dot"></span>
+            <span>${label}</span>
+          </div>
+        `).join("")}
       </div>
-
-      <div class="progress-step ${request.quotes ? "is-quotes" : ""}">
-        <span class="progress-dot"></span>
-        <span>عروض أسعار</span>
-      </div>
-
-      <div class="progress-step ${request.purchased ? "is-purchased" : ""}">
-        <span class="progress-dot"></span>
-        <span>تم الشراء</span>
-      </div>
-
-      <div class="progress-step ${request.settled ? "is-settled" : ""}">
-        <span class="progress-dot"></span>
-        <span>تمت التصفية</span>
-      </div>
+      ${editorOpen ? `
+        <div class="status-editor" data-status-editor="${escapeHtml(request.id)}">
+          <strong>تغيير الحالة</strong>
+          <div class="status-editor__options" role="group" aria-label="اختر الحالة الجديدة">
+            ${steps.map(([value, label]) => `
+              <button
+                class="status-editor__option ${currentStatus === value ? "is-selected" : ""}"
+                type="button"
+                data-status-choice="${value}"
+              >${label}</button>
+            `).join("")}
+          </div>
+          <div class="status-editor__actions">
+            <button class="status-editor__confirm" type="button" data-confirm-status="${escapeHtml(request.id)}" data-selected-status="${currentStatus}">موافق</button>
+            <button class="status-editor__cancel" type="button" data-cancel-status>إلغاء</button>
+          </div>
+        </div>
+      ` : ""}
     </div>
   `;
+}
+
+async function handleStatusEditorClick(event) {
+  const toggle = event.target.closest("[data-toggle-status-editor]");
+  if (toggle) {
+    event.preventDefault();
+    event.stopPropagation();
+    const requestId = toggle.dataset.toggleStatusEditor;
+    state.statusEditorRequestId = state.statusEditorRequestId === requestId ? null : requestId;
+    render();
+    if (state.activeDetailsId === requestId) renderDetails(requestId);
+    return true;
+  }
+
+  const choice = event.target.closest("[data-status-choice]");
+  if (choice) {
+    event.preventDefault();
+    event.stopPropagation();
+    const editor = choice.closest("[data-status-editor]");
+    editor?.querySelectorAll("[data-status-choice]").forEach((button) => {
+      button.classList.toggle("is-selected", button === choice);
+    });
+    const confirm = editor?.querySelector("[data-confirm-status]");
+    if (confirm) confirm.dataset.selectedStatus = choice.dataset.statusChoice;
+    return true;
+  }
+
+  if (event.target.closest("[data-cancel-status]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    const requestId = event.target.closest("[data-status-editor]")?.dataset.statusEditor;
+    state.statusEditorRequestId = null;
+    render();
+    if (requestId && state.activeDetailsId === requestId) renderDetails(requestId);
+    return true;
+  }
+
+  const confirm = event.target.closest("[data-confirm-status]");
+  if (confirm) {
+    event.preventDefault();
+    event.stopPropagation();
+    const requestId = confirm.dataset.confirmStatus;
+    const request = state.requests.find((item) => item.id === requestId);
+    const status = confirm.dataset.selectedStatus || getRequestStatusValue(request);
+    if (!request || !["new", "quotes", "purchased", "settled"].includes(status)) return true;
+
+    confirm.disabled = true;
+    try {
+      const payload = statusUpdatePayload(status);
+      const { error } = await getSupabase().from("requests").update(payload).eq("id", requestId);
+      if (error) throw error;
+      request.quotes = payload.has_quotes;
+      request.purchased = payload.is_purchased;
+      request.settled = payload.is_settled;
+      state.statusEditorRequestId = null;
+      render();
+      if (state.activeDetailsId === requestId) renderDetails(requestId);
+      showToast(`تم تغيير الحالة إلى: ${getRequestStatusLabel(status)}`);
+    } catch (error) {
+      confirm.disabled = false;
+      handleDatabaseError(error, "تعذر تغيير حالة الطلب");
+    }
+    return true;
+  }
+
+  return false;
 }
 
 function requestCardMarkup(request) {
@@ -1465,8 +1609,9 @@ function requestEditFormMarkup(request) {
           <span>الحالة</span>
           <select name="status">
             <option value="new" ${status === "new" ? "selected" : ""}>تم رفع الطلب</option>
-            <option value="quotes" ${status === "quotes" ? "selected" : ""}>تم إحضار عروض أسعار</option>
-            <option value="purchased" ${status === "purchased" ? "selected" : ""}>تم الشراء</option>
+            <option value="quotes" ${status === "quotes" ? "selected" : ""}>تم الاستلام</option>
+            <option value="purchased" ${status === "purchased" ? "selected" : ""}>تم الإدخال</option>
+            <option value="settled" ${status === "settled" ? "selected" : ""}>تمت التصفية</option>
           </select>
         </label>
 
@@ -1494,10 +1639,6 @@ function requestEditFormMarkup(request) {
         </label>
       ` : ""}
 
-      <label class="request-edit-check-row">
-        <input name="settled" type="checkbox" ${request.settled ? "checked" : ""}>
-        <span>تمت تصفية هذا الطلب</span>
-      </label>
 
       <div class="request-edit-actions">
         <button class="primary-button" type="submit">حفظ التعديلات</button>
@@ -1891,9 +2032,6 @@ function renderDetails(requestId) {
 
     <div class="detail-actions">
       <button class="detail-edit-button" type="button" data-open-request-edit="${escapeHtml(request.id)}">✎ تعديل بيانات الطلب</button>
-      <button class="detail-action-button" type="button" data-toggle-settlement="${escapeHtml(request.id)}">
-        ${request.settled ? "إلغاء علامة تمت التصفية" : "تحديد الطلب بأنه تمت تصفيته"}
-      </button>
       <button class="detail-delete-button" type="button" data-delete-request="${escapeHtml(request.id)}">حذف الوثيقة</button>
       <small class="delete-password-note">الحذف يتطلب كلمة المرور ورسالة تأكيد، ويتم التحقق منها داخل قاعدة البيانات.</small>
     </div>
@@ -2782,7 +2920,6 @@ async function saveRequestDetails(form) {
   const status = String(formData.get("status") || "new");
   const offersCount = Math.max(0, Number(formData.get("offersCount") || 0));
   const supplier = String(formData.get("supplier") || "").trim();
-  const settled = form.querySelector('[name="settled"]')?.checked === true;
   const description = request.type === "work-order"
     ? String(formData.get("description") || "").trim()
     : "";
@@ -2801,8 +2938,9 @@ async function saveRequestDetails(form) {
     throw new Error("تفاصيل أمر التشغيل مطلوبة.");
   }
 
-  const hasQuotes = status === "quotes" || status === "purchased";
-  const isPurchased = status === "purchased";
+  const statusPayload = statusUpdatePayload(status);
+  const hasQuotes = statusPayload.has_quotes;
+  const isPurchased = statusPayload.is_purchased;
   const finalPrice = finalPriceValue;
 
   const { error } = await getSupabase()
@@ -2817,7 +2955,7 @@ async function saveRequestDetails(form) {
       request_date: requestDate,
       has_quotes: hasQuotes,
       is_purchased: isPurchased,
-      is_settled: settled,
+      is_settled: statusPayload.is_settled,
       offers_count: Number.isFinite(offersCount) ? Math.trunc(offersCount) : 0,
       supplier
     })
@@ -2927,8 +3065,9 @@ async function addRequest(formData) {
     throw new Error("رقم الإضبارة / الطلب مطلوب.");
   }
 
-  const status = formData.get("status");
-  const isPurchased = status === "purchased";
+  const status = String(formData.get("status") || "new");
+  const statusPayload = statusUpdatePayload(status);
+  const isPurchased = statusPayload.is_purchased;
   const finalPriceValue = formData.get("finalPrice");
   const type = formData.get("type");
   const materialItems = type === "materials" ? collectMaterialItemsFromForm("new") : [];
@@ -2962,10 +3101,10 @@ async function addRequest(formData) {
       p_department_code: formData.get("department"),
       p_description: type === "work-order" ? String(formData.get("description") || "").trim() : "",
       p_initial_price: finalPriceValue !== "" ? Number(finalPriceValue) : null,
-      p_has_quotes: status === "quotes" || isPurchased,
+      p_has_quotes: statusPayload.has_quotes,
       p_is_purchased: isPurchased,
-      p_is_settled: formData.get("settled") === "on",
-      p_offers_count: status === "quotes" || isPurchased ? 1 : 0,
+      p_is_settled: statusPayload.is_settled,
+      p_offers_count: statusPayload.has_quotes ? 1 : 0,
       p_sort_order: sortOrder,
       p_items: itemsPayload
     }
@@ -3214,6 +3353,8 @@ elements.searchInput.addEventListener("input", (event) => {
 });
 
 elements.requestList.addEventListener("click", async (event) => {
+  if (await handleStatusEditorClick(event)) return;
+
   const moveTopButton = event.target.closest("[data-move-request-top]");
   if (moveTopButton) {
     event.preventDefault();
@@ -3399,6 +3540,7 @@ elements.quickDetailsContent.addEventListener("submit", async (event) => {
 });
 
 elements.detailsContent.addEventListener("click", async (event) => {
+  if (await handleStatusEditorClick(event)) return;
   const openRequestEditButton = event.target.closest("[data-open-request-edit]");
   if (openRequestEditButton) {
     state.detailsEditMode = true;
@@ -4101,6 +4243,15 @@ elements.attachmentsCameraInput.addEventListener("change", async (event) => {
   } catch (error) {
     handleDatabaseError(error, "تعذر تجهيز صورة الكاميرا");
   }
+});
+
+
+elements.addRequestForm.elements.requestNumber?.addEventListener("blur", (event) => {
+  const value = String(event.target.value || "").trim();
+  if (!value) return;
+  const duplicate = findDuplicateRequestNumber(value);
+  if (!duplicate) return;
+  window.alert(`تنبيه فقط: رقم الإضبارة / الطلب هذا موجود مسبقًا\n\nالرقم: ${duplicate.requestNumber}\nالطلب: ${duplicate.title}`);
 });
 
 elements.addRequestForm.addEventListener("submit", async (event) => {

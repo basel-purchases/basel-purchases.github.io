@@ -8,7 +8,7 @@
 
   <title>نظام إدارة المشتريات</title>
 
-  <link rel="stylesheet" href="css/style.css?v=9.4.1-20260810">
+  <link rel="stylesheet" href="css/style.css?v=9.5.0-20260819">
 </head>
 
 <body>
@@ -71,12 +71,12 @@
       </article>
 
       <article class="summary-card">
-        <span>بانتظار عروض</span>
+        <span>بانتظار الاستلام</span>
         <strong id="waitingQuotesCount">0</strong>
       </article>
 
       <article class="summary-card">
-        <span>تم الشراء</span>
+        <span>تم الإدخال</span>
         <strong id="purchasedCount">0</strong>
       </article>
 
@@ -98,7 +98,7 @@
         <input
           id="searchInput"
           type="search"
-          placeholder="ابحث في الطلبات..."
+          placeholder="ابحث برقم الإضبارة أو النص..."
           autocomplete="off"
         >
       </label>
@@ -199,9 +199,9 @@
           <div class="filter-options" data-filter-group="status">
             <button class="filter-option" type="button" data-filter-value="all">الكل</button>
             <button class="filter-option" type="button" data-filter-value="new">جديد</button>
-            <button class="filter-option" type="button" data-filter-value="quotes">عروض أسعار</button>
-            <button class="filter-option" type="button" data-filter-value="purchased">تم الشراء</button>
-            <button class="filter-option" type="button" data-filter-value="not-purchased">لم يتم الشراء</button>
+            <button class="filter-option" type="button" data-filter-value="quotes">تم الاستلام</button>
+            <button class="filter-option" type="button" data-filter-value="purchased">تم الإدخال</button>
+            <button class="filter-option" type="button" data-filter-value="not-purchased">لم يتم الإدخال</button>
           </div>
         </section>
 
@@ -345,7 +345,7 @@
         <label>
           <span>رقم الإضبارة / الطلب</span>
           <input name="requestNumber" type="text" autocomplete="off" required placeholder="مثال: 171-172 أو 171/172 أو أي صيغة نصية">
-          <small>حقل نصي حر: يمكنك إدخال أرقام، شرطات، أحرف أو أي صيغة تحتاجها. يجب ألا يكون مستخدمًا مسبقًا.</small>
+          <small>عند مغادرة الحقل سيتم تنبيهك إذا كان الرقم موجودًا مسبقًا، مع تجاهل الفراغات وترتيب الرقمين حول الشرطة.</small>
         </label>
 
         <label>
@@ -399,8 +399,9 @@
             <span>الحالة الأولية</span>
             <select name="status">
               <option value="new">تم رفع الطلب</option>
-              <option value="quotes">تم إحضار عروض أسعار</option>
-              <option value="purchased">تم الشراء</option>
+              <option value="quotes">تم الاستلام</option>
+              <option value="purchased">تم الإدخال</option>
+              <option value="settled">تمت التصفية</option>
             </select>
           </label>
 
@@ -410,10 +411,6 @@
           </label>
         </div>
 
-        <label class="check-row">
-          <input name="settled" type="checkbox">
-          <span>تمت تصفية هذا الطلب</span>
-        </label>
 
         <div id="requestAttachmentsField" class="file-source-field">
           <span class="file-source-field__title">صور أو ملفات PDF للطلب / أمر التشغيل</span>
@@ -529,6 +526,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/supabase-config.js?v=9.4.0-20260810"></script>
-  <script src="js/app.js?v=9.4.0-20260810"></script>
+  <script src="js/app.js?v=9.5.0-20260819"></script>
 </body>
 </html>
